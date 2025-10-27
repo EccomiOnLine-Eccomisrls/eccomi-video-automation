@@ -454,72 +454,216 @@ def admin_resend_email(job_id: str, _: bool = Depends(require_admin_header)):
 # =========================
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard_page():
-    # Non controlliamo più il token a livello di URL.
-    # L'autorizzazione vera avviene sulle API via header Bearer.
     return """
 <!doctype html><html lang="it"><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Eccomi Video — Dashboard</title>
 <style>
-body{font-family:system-ui,Inter,sans-serif;margin:24px}
-h1{margin:0 0 12px} table{border-collapse:collapse;width:100%}
-td,th{border:1px solid #e5e7eb;padding:8px;font-size:14px}
+body{font-family:system-ui,Inter,sans-serif;margin:24px;max-width:1100px}
+h1{margin:0 0 12px}
+section{margin:16px 0;padding:12px;border:1px solid #e5e7eb;border-radius:8px;background:#fafafa}
+label{display:block;margin:6px 0 2px}
+input,select,textarea{width:100%;padding:8px;border:1px solid #ddd;border-radius:6px}
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.btn{padding:.45rem .8rem;border:1px solid #ddd;border-radius:.4rem;background:white;cursor:pointer}
+.btn:disabled{opacity:.5;cursor:not-allowed}
 .badge{padding:.2rem .5rem;border-radius:.4rem;background:#eee}
-.btn{padding:.35rem .6rem;border:1px solid #ddd;border-radius:.4rem;background:#fafafa;cursor:pointer}
-.btn:disabled{opacity:.5;cursor:not-allowed} tr:hover{background:#fafafa}
+table{border-collapse:collapse;width:100%;margin-top:12px}
+td,th{border:1px solid #e5e7eb;padding:8px;font-size:14px;vertical-align:top}
+tr:hover{background:#fafafa}
 small{color:#666}
+hr{border:none;border-top:1px solid #eee;margin:12px 0}
 </style>
+
 <h1>Eccomi Video — Dashboard</h1>
 <p><small>Auto-refresh 6s · <a href="#" id="refresh">Aggiorna ora</a></small></p>
+
+<section id="creator">
+  <h3>Crea nuovo lavoro</h3>
+  <div class="grid3">
+    <div>
+      <label>Tipo</label>
+      <select id="type">
+        <option value="did-photo">Foto parlante (D-ID)</option>
+        <option value="hg-text">Avatar Heygen (testo)</option>
+        <option value="hg-audio">Avatar Heygen (audio URL)</option>
+      </select>
+    </div>
+    <div>
+      <label>Ordine (facoltativo)</label>
+      <input id="order_name" placeholder="es. Ordine #1234">
+    </div>
+    <div>
+      <label>Email destinatario (facoltativo per test)</label>
+      <input id="to_email" placeholder="es. info@eccomionline.com">
+    </div>
+  </div>
+
+  <div id="did-fields">
+    <div class="grid">
+      <div>
+        <label>Image URL (obbligatorio)</label>
+        <input id="image_url" placeholder="https://...jpg/png">
+      </div>
+      <div>
+        <label>Voce (ms:<VOICE> oppure eleven:<VOICE_ID>)</label>
+        <input id="voice" value="ms:it-IT-GiuseppeNeural">
+      </div>
+    </div>
+    <label>Script (obbligatorio se non passi audio_url)</label>
+    <textarea id="script" rows="3" placeholder="Testo da pronunciare"></textarea>
+    <label>Audio URL (opzionale; se presente ignora Script)</label>
+    <input id="audio_url" placeholder="https://...mp3">
+  </div>
+
+  <div id="hg-text-fields" style="display:none">
+    <label>Script (obbligatorio)</label>
+    <textarea id="hg_script" rows="3" placeholder="Testo per l'avatar Heygen"></textarea>
+    <div class="grid">
+      <div>
+        <label>Avatar ID (facoltativo: usa default)</label>
+        <input id="hg_avatar">
+      </div>
+      <div>
+        <label>Voice ID (facoltativo)</label>
+        <input id="hg_voice" placeholder="it_male_energetic">
+      </div>
+    </div>
+  </div>
+
+  <div id="hg-audio-fields" style="display:none">
+    <div class="grid">
+      <div>
+        <label>Audio URL (obbligatorio)</label>
+        <input id="hg_audio_url" placeholder="https://...mp3">
+      </div>
+      <div>
+        <label>Avatar ID (facoltativo: usa default)</label>
+        <input id="hg_avatar2">
+      </div>
+    </div>
+  </div>
+
+  <hr/>
+  <button class="btn" id="create">Crea lavoro</button>
+  <span id="msg" style="margin-left:8px"></span>
+</section>
+
 <table id="jobs"><thead>
 <tr><th>ID</th><th>Provider</th><th>Status</th><th>Video</th><th>Email</th><th>Ordine</th><th>Azioni</th></tr>
 </thead><tbody></tbody></table>
 
 <script>
+// ==== Token handling ====
 function askToken(){
-  // 1) prova query ?token=...
   let tk = new URLSearchParams(location.search).get("token");
-  // 2) poi sessionStorage
   if(!tk) tk = sessionStorage.getItem("eccomi_admin_token") || "";
-  // 3) se ancora vuoto, prompt
-  if(!tk) tk = prompt("Inserisci ADMIN_TOKEN");
-  if(!tk) { document.body.innerHTML = "<p>Token mancante.</p>"; return null; }
+  if(!tk){ tk = prompt("Inserisci ADMIN_TOKEN"); }
+  if(!tk){ document.body.innerHTML = "<p>Token mancante.</p>"; return null; }
   sessionStorage.setItem("eccomi_admin_token", tk);
   return tk;
 }
 const token = askToken();
-if(token){
-  async function load(){
-    const r = await fetch('/api/admin/jobs', { headers: { Authorization: `Bearer ${token}` }});
-    if(!r.ok){ document.body.innerHTML = "<p>Unauthorized</p>"; return; }
-    const data = await r.json();
-    const tbody = document.querySelector("#jobs tbody");
-    tbody.innerHTML = "";
-    for(const j of (data.jobs||[])){
-      const tr = document.createElement("tr");
-      const v = j.video_url ? `<a href="${j.video_url}" target="_blank">apri</a>` : "";
-      tr.innerHTML = `
-        <td><code>${j.id||""}</code><br><small>${j.updated_at||""}</small></td>
-        <td>${j.provider||""}</td>
-        <td><span class="badge">${j.status||""}</span></td>
-        <td>${v}</td>
-        <td>${j.to_email||""}</td>
-        <td>${j.order_name||""}</td>
-        <td><button class="btn" ${j.video_url?"":"disabled"} onclick="resend('${j.id}')">Re-invia email</button></td>
-      `;
-      tbody.appendChild(tr);
-    }
-  }
-  async function resend(id){
-    const r = await fetch(`/api/admin/resend-email/${encodeURIComponent(id)}`, {
-      method:"POST", headers: { Authorization: `Bearer ${token}` }
-    });
-    alert(r.ok ? "Email inviata" : "Errore reinvio");
-  }
-  window.resend = resend;
-  document.getElementById("refresh").onclick = (e)=>{ e.preventDefault(); load(); };
-  load(); setInterval(load, 6000);
+if(!token) throw new Error("No token");
+
+// ==== UI toggle per i campi ====
+const selType = document.getElementById('type');
+const didBox = document.getElementById('did-fields');
+const hgTextBox = document.getElementById('hg-text-fields');
+const hgAudioBox = document.getElementById('hg-audio-fields');
+function updateFields(){
+  const t = selType.value;
+  didBox.style.display = (t==='did-photo')?'block':'none';
+  hgTextBox.style.display = (t==='hg-text')?'block':'none';
+  hgAudioBox.style.display = (t==='hg-audio')?'block':'none';
 }
+selType.onchange = updateFields; updateFields();
+
+// ==== Loader tabella ====
+async function load(){
+  const r = await fetch('/api/admin/jobs', { headers:{ Authorization:`Bearer ${token}` }});
+  if(!r.ok){ document.body.innerHTML = "<p>Unauthorized</p>"; return; }
+  const data = await r.json();
+  const tbody = document.querySelector("#jobs tbody");
+  tbody.innerHTML = "";
+  for(const j of (data.jobs||[])){
+    const tr = document.createElement("tr");
+    const v = j.video_url ? `<a href="${j.video_url}" target="_blank">apri</a>` : "";
+    tr.innerHTML = `
+      <td><code>${j.id||""}</code><br><small>${j.updated_at||""}</small></td>
+      <td>${j.provider||""}</td>
+      <td><span class="badge">${j.status||""}</span></td>
+      <td>${v}</td>
+      <td>${j.to_email||""}</td>
+      <td>${j.order_name||""}</td>
+      <td><button class="btn" ${j.video_url?"":"disabled"} onclick="resend('${j.id}')">Re-invia email</button></td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+document.getElementById("refresh").onclick = (e)=>{ e.preventDefault(); load(); };
+setInterval(load, 6000); load();
+
+// ==== Azione: re-invio email ====
+async function resend(id){
+  const r = await fetch(`/api/admin/resend-email/${encodeURIComponent(id)}`, {
+    method:"POST", headers:{ Authorization:`Bearer ${token}` }
+  });
+  alert(r.ok ? "Email inviata" : "Errore reinvio");
+}
+window.resend = resend;
+
+// ==== Creator Panel: submit ====
+function setMsg(text, ok=true){
+  const el = document.getElementById('msg');
+  el.textContent = text;
+  el.style.color = ok ? "green" : "crimson";
+}
+document.getElementById('create').onclick = async ()=>{
+  setMsg("Invio in corso...", true);
+  const t = selType.value;
+  const order_name = document.getElementById('order_name').value || "ManualOrder";
+  const to_email = document.getElementById('to_email').value || "";
+
+  let url, body;
+  if(t === 'did-photo'){
+    const image_url = document.getElementById('image_url').value.trim();
+    const voice = document.getElementById('voice').value.trim() || "ms:it-IT-GiuseppeNeural";
+    const script = document.getElementById('script').value.trim();
+    const audio_url = document.getElementById('audio_url').value.trim();
+    if(!image_url){ setMsg("Image URL obbligatorio", false); return; }
+    if(!script && !audio_url){ setMsg("Scrivi uno script o passa un audio_url", false); return; }
+    url = "/api/manual/photo";
+    body = { image_url, voice, script: script||undefined, audio_url: audio_url||undefined, to_email: to_email||undefined, order_name };
+  } else if(t === 'hg-text'){
+    const script = document.getElementById('hg_script').value.trim();
+    if(!script){ setMsg("Script obbligatorio", false); return; }
+    url = "/api/manual/avatar-text";
+    body = { script, avatar_id: (document.getElementById('hg_avatar').value||undefined),
+             voice_id: (document.getElementById('hg_voice').value||undefined),
+             to_email: to_email||undefined, order_name };
+  } else { // hg-audio
+    const audio_url = document.getElementById('hg_audio_url').value.trim();
+    if(!audio_url){ setMsg("Audio URL obbligatorio", false); return; }
+    url = "/api/manual/avatar-audio";
+    body = { audio_url, avatar_id: (document.getElementById('hg_avatar2').value||undefined),
+             to_email: to_email||undefined, order_name };
+  }
+
+  const r = await fetch(url, {
+    method:"POST",
+    headers:{ "Content-Type":"application/json", Authorization:`Bearer ${token}` },
+    body: JSON.stringify(body)
+  });
+  const data = await r.json().catch(()=> ({}));
+  if(!r.ok){
+    setMsg("Errore: " + (data.detail || r.status), false);
+    return;
+  }
+  setMsg("Creato! Aggiorno tabella…", true);
+  load();
+};
 </script>
 </html>
 """
