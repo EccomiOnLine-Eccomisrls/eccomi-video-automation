@@ -38,33 +38,40 @@ class Job(BaseModel):
     order_name: Optional[str] = None
 
 # ==== UTILS ====
-# ---------- HEYGEN ----------
-def heygen_submit(script: str, avatar_id: Optional[str] = None, audio_url: Optional[str] = None):
+# ==== HEYGEN ====
+HEYGEN_KEY = os.getenv("HEYGEN_API_KEY", "")
+HEYGEN_AVATAR = os.getenv("HEYGEN_AVATAR_ID", "")
+HEYGEN_VOICE_ID = os.getenv("HEYGEN_VOICE_ID", "it_male_energetic")  # default
+
+def heygen_submit(script: str, order_id: str):
     if not HEYGEN_KEY:
         raise HTTPException(500, "HEYGEN_API_KEY mancante")
-    aid = avatar_id or HEYGEN_AVATAR
-    if not aid:
+    if not HEYGEN_AVATAR:
         raise HTTPException(500, "HEYGEN_AVATAR_ID mancante")
 
     url = "https://api.heygen.com/v1/video.submit"
-    headers = {"X-Api-Key": HEYGEN_KEY, "Content-Type": "application/json"}
-
+    headers = {
+        "X-Api-Key": HEYGEN_KEY,
+        "Content-Type": "application/json"
+    }
     data = {
-        "avatar_id": aid,
+        "avatar_id": HEYGEN_AVATAR,
+        "script": {
+            "type": "text",
+            "input_text": script,
+            "voice_id": HEYGEN_VOICE_ID
+        },
         "test": False,
         "caption": False,
-        "aspect_ratio": "9:16"
+        "aspect_ratio": "9:16",
+        "resolution": "720p"
     }
 
-    if audio_url:
-        data["audio"] = {"type": "mp3", "source": "url", "url": audio_url}
-    else:
-        data["script"] = {"type": "text", "input_text": script}
-
-    r = requests.post(url, json=data, headers=headers, timeout=120)
+    r = requests.post(url, json=data, headers=headers, timeout=60)
     if r.status_code != 200:
         raise HTTPException(r.status_code, f"HeyGen submit error: {r.text}")
-    return r.json()
+    res = r.json()
+    return res.get("data", {}).get("video_id")
 
 def heygen_status(video_id: str):
     url = f"https://api.heygen.com/v1/video.status?video_id={video_id}"
