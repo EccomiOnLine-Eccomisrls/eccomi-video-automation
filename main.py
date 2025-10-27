@@ -32,7 +32,7 @@ if RESEND_KEY:
     resend.api_key = RESEND_KEY
 
 # Jobs store (in-memory)
-JOBS: dict[str, dict] = {}
+JOBS: Dict[str, Dict[str, Any]] = {}
 JOBS_LOCK = Lock()
 
 def _jobs_upsert(job_id: str, data: dict):
@@ -53,12 +53,12 @@ def _jobs_list():
 # =========================
 # APP
 # =========================
-app = FastAPI(title="Eccomi Video Automation", version="2.1")
+app = FastAPI(title="Eccomi Video Automation", version="2.2")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://www.eccomionline.com", "https://eccomionline.com", "*"],
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*", "Authorization"],
 )
 
 # =========================
@@ -82,7 +82,7 @@ class Job(BaseModel):
     script: Optional[str] = None
     voice: Optional[str] = "ms:it-IT-GiuseppeNeural"  # "ms:<VOICE>" | "eleven:<VOICE_ID>"
     audio_url: Optional[str] = None
-    to_email: str
+    to_email: Optional[str] = None
     order_name: Optional[str] = None
 
 class HeygenText(BaseModel):
@@ -104,20 +104,20 @@ class ManualPhotoReq(BaseModel):
     script: Optional[str] = None
     audio_url: Optional[str] = None
     voice: Optional[str] = "ms:it-IT-GiuseppeNeural"
-    to_email: str
+    to_email: Optional[str] = None
     order_name: Optional[str] = "ManualOrder"
 
 class ManualAvatarTextReq(BaseModel):
     script: str
     avatar_id: Optional[str] = None
     voice_id: Optional[str] = None
-    to_email: str
+    to_email: Optional[str] = None
     order_name: Optional[str] = "ManualOrder"
 
 class ManualAvatarAudioReq(BaseModel):
     audio_url: str
     avatar_id: Optional[str] = None
-    to_email: str
+    to_email: Optional[str] = None
     order_name: Optional[str] = "ManualOrder"
 
 # =========================
@@ -183,17 +183,23 @@ def poll_and_notify_did(job: Job, talk_id: str, max_wait_sec: int = 600, every_s
         video_url = s.get("result_url")
         _jobs_upsert(talk_id, {"status": st or "", "video_url": video_url, "raw": s})
         if st == "done" and video_url:
-            html = (f'<p>Ciao! 👋</p><p>Il tuo <b>Video Parlante AI</b> è pronto.</p>'
-                    f'<p><a href="{video_url}" target="_blank">Scarica il video</a></p>')
-            send_email(job.to_email, f"Video AI pronto — Ordine {job.order_name or ""}", html)
+            if job.to_email:
+                html = (
+                    '<p>Ciao! 👋</p><p>Il tuo <b>Video Parlante AI</b> è pronto.</p>'
+                    f'<p><a href="{video_url}" target="_blank">Scarica il video</a></p>'
+                )
+                send_email(job.to_email, f"Video AI pronto — Ordine {job.order_name or ''}", html)
             return
         if st in ("error", "failed"):
-            send_email(job.to_email, f"Problema con il tuo Video AI — Ordine {job.order_name or ""}",
-                       "<p>Si è verificato un errore. Ti contatteremo a breve.</p>")
+            if job.to_email:
+                send_email(job.to_email, f"Problema con il tuo Video AI — Ordine {job.order_name or ''}",
+                           "<p>Si è verificato un errore. Ti contatteremo a breve.</p>")
             return
-        time.sleep(every_sec); waited += every_sec
-    send_email(job.to_email, f"Stiamo completando il tuo Video AI — Ordine {job.order_name or ""}",
-               "<p>La generazione richiede più tempo del previsto. Ti avviseremo appena pronto.</p>")
+        time.sleep(every_sec)
+        waited += every_sec
+    if job.to_email:
+        send_email(job.to_email, f"Stiamo completando il tuo Video AI — Ordine {job.order_name or ''}",
+                   "<p>La generazione richiede più tempo del previsto. Ti avviseremo appena pronto.</p>")
 
 # =========================
 # HEYGEN (Avatar → Talking Video)
@@ -212,7 +218,10 @@ def _ensure_avatar(aid: Optional[str]) -> str:
 def heygen_submit_text(script: str, avatar_id: Optional[str] = None, voice_id: Optional[str] = None) -> str:
     aid = _ensure_avatar(avatar_id)
     payload = {
-        "video_inputs": [{"avatar_id": aid, "voice": {"type": "text", "input_text": script, "voice_id": (voice_id or HEYGEN_VOICE_ID)}}],
+        "video_inputs": [{
+            "avatar_id": aid,
+            "voice": {"type": "text", "input_text": script, "voice_id": (voice_id or HEYGEN_VOICE_ID)}
+        }],
         "test": False, "caption": False, "aspect_ratio": "9:16", "resolution": "720p"
     }
     try:
@@ -230,7 +239,10 @@ def heygen_submit_text(script: str, avatar_id: Optional[str] = None, voice_id: O
 def heygen_submit_audio(audio_url: str, avatar_id: Optional[str] = None) -> str:
     aid = _ensure_avatar(avatar_id)
     payload = {
-        "video_inputs": [{"avatar_id": aid, "audio": {"type": "mp3", "source": "url", "url": audio_url}}],
+        "video_inputs": [{
+            "avatar_id": aid,
+            "audio": {"type": "mp3", "source": "url", "url": audio_url}
+        }],
         "test": False, "caption": False, "aspect_ratio": "9:16", "resolution": "720p"
     }
     try:
@@ -261,7 +273,7 @@ def heygen_status(video_id: str) -> Dict[str, Any]:
         return r2.json()
     raise HTTPException(502, f"HeyGen status error: v2={r.status_code} {r.text} | v1={r2.status_code} {r2.text}")
 
-def poll_and_notify_heygen(video_id: str, to_email: str, order_name: str | None = None,
+def poll_and_notify_heygen(video_id: str, to_email: Optional[str], order_name: Optional[str] = None,
                            every_sec: int = 7, max_wait_sec: int = 1200):
     _jobs_upsert(video_id, {"id": video_id, "provider": "heygen", "status": "queued",
                             "to_email": to_email, "order_name": order_name})
@@ -278,17 +290,22 @@ def poll_and_notify_heygen(video_id: str, to_email: str, order_name: str | None 
         video_url = (data.get("video") or {}).get("url") or data.get("video_url")
         _jobs_upsert(video_id, {"status": status, "video_url": video_url, "raw": s})
         if status in {"completed", "done", "succeeded"} and video_url:
-            html = (f'<p>Ciao! 👋</p><p>Il tuo <b>Video Avatar</b> è pronto.</p>'
-                    f'<p><a href="{video_url}" target="_blank">Scarica il video</a></p>')
-            send_email(to_email, f"Video Avatar pronto — Ordine {order_name or ""}", html)
+            if to_email:
+                html = (
+                    '<p>Ciao! 👋</p><p>Il tuo <b>Video Avatar</b> è pronto.</p>'
+                    f'<p><a href="{video_url}" target="_blank">Scarica il video</a></p>'
+                )
+                send_email(to_email, f"Video Avatar pronto — Ordine {order_name or ''}", html)
             return
         if status in {"failed", "error", "canceled"}:
-            send_email(to_email, f"Problema con il tuo Video Avatar — Ordine {order_name or ""}",
-                       "<p>Si è verificato un errore. Ti contatteremo a breve.</p>")
+            if to_email:
+                send_email(to_email, f"Problema con il tuo Video Avatar — Ordine {order_name or ''}",
+                           "<p>Si è verificato un errore. Ti contatteremo a breve.</p>")
             return
         time.sleep(every_sec); waited += every_sec
-    send_email(to_email, f"Stiamo completando il tuo Video Avatar — Ordine {order_name or ""}",
-               "<p>La generazione richiede più tempo del previsto. Ti avviseremo appena pronto.</p>")
+    if to_email:
+        send_email(to_email, f"Stiamo completando il tuo Video Avatar — Ordine {order_name or ''}",
+                   "<p>La generazione richiede più tempo del previsto. Ti avviseremo appena pronto.</p>")
 
 # =========================
 # HMAC Shopify
@@ -305,12 +322,15 @@ def verify_shopify_hmac(request: Request, raw_body: bytes):
 # =========================
 @app.get("/", tags=["meta"])
 def root():
-    return {"ok": True, "service": "EccomiVideoAutomation", "version": "2.1",
-            "health": "/api/health", "docs": "/docs", "dashboard": "/dashboard?token=<ADMIN_TOKEN>"}
+    return {"ok": True, "service": "EccomiVideoAutomation", "version": "2.2",
+            "health": "/api/health", "docs": "/docs", "dashboard": "/dashboard"}
+
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon(): return Response(status_code=204)
+
 @app.get("/api/health")
-def health(): return {"ok": True, "service": "EccomiVideoAutomation", "version": "2.1"}
+def health(): return {"ok": True, "service": "EccomiVideoAutomation", "version": "2.2"}
+
 @app.get("/api/diag/env")
 def diag_env():
     return {
@@ -444,13 +464,16 @@ def admin_resend_email(job_id: str, _: bool = Depends(require_admin_header)):
     if not j: raise HTTPException(404, "Job not found")
     if not j.get("to_email"): raise HTTPException(400, "Job senza email")
     if not j.get("video_url"): raise HTTPException(400, "Video non pronto")
-    html = (f'<p>Ciao! 👋</p><p>Il tuo video è pronto.</p>'
-            f'<p><a href="{j["video_url"]}" target="_blank">Scarica</a></p>')
+    video_url = j["video_url"]
+    html = (
+        '<p>Ciao! 👋</p><p>Il tuo video è pronto.</p>'
+        f'<p><a href="{video_url}" target="_blank">Scarica</a></p>'
+    )
     send_email(j["to_email"], f"Video pronto — Ordine {j.get('order_name','')}", html)
     return {"ok": True, "resent": True}
 
 # =========================
-# DASHBOARD (usa Bearer header nelle fetch)
+# DASHBOARD + CREATOR PANEL
 # =========================
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard_page():
@@ -507,7 +530,7 @@ hr{border:none;border-top:1px solid #eee;margin:12px 0}
         <input id="image_url" placeholder="https://...jpg/png">
       </div>
       <div>
-        <label>Voce (ms:<VOICE> oppure eleven:<VOICE_ID>)</label>
+        <label>Voce (ms:&lt;VOICE&gt; / eleven:&lt;VOICE_ID&gt;)</label>
         <input id="voice" value="ms:it-IT-GiuseppeNeural">
       </div>
     </div>
@@ -635,19 +658,22 @@ document.getElementById('create').onclick = async ()=>{
     if(!image_url){ setMsg("Image URL obbligatorio", false); return; }
     if(!script && !audio_url){ setMsg("Scrivi uno script o passa un audio_url", false); return; }
     url = "/api/manual/photo";
-    body = { image_url, voice, script: script||undefined, audio_url: audio_url||undefined, to_email: to_email||undefined, order_name };
+    body = { image_url, voice, script: script||undefined, audio_url: audio_url||undefined,
+             to_email: to_email||undefined, order_name };
   } else if(t === 'hg-text'){
     const script = document.getElementById('hg_script').value.trim();
     if(!script){ setMsg("Script obbligatorio", false); return; }
     url = "/api/manual/avatar-text";
-    body = { script, avatar_id: (document.getElementById('hg_avatar').value||undefined),
+    body = { script,
+             avatar_id: (document.getElementById('hg_avatar').value||undefined),
              voice_id: (document.getElementById('hg_voice').value||undefined),
              to_email: to_email||undefined, order_name };
   } else { // hg-audio
     const audio_url = document.getElementById('hg_audio_url').value.trim();
     if(!audio_url){ setMsg("Audio URL obbligatorio", false); return; }
     url = "/api/manual/avatar-audio";
-    body = { audio_url, avatar_id: (document.getElementById('hg_avatar2').value||undefined),
+    body = { audio_url,
+             avatar_id: (document.getElementById('hg_avatar2').value||undefined),
              to_email: to_email||undefined, order_name };
   }
 
@@ -667,36 +693,3 @@ document.getElementById('create').onclick = async ()=>{
 </script>
 </html>
 """
-
-# =========================
-# ORDINI MANUALI (protetti Bearer)
-# =========================
-@app.post("/api/manual/photo")
-async def manual_photo(req: ManualPhotoReq, bg: BackgroundTasks, _=Depends(require_admin_header)):
-    if not (req.script or req.audio_url):
-        raise HTTPException(400, "Fornisci script oppure audio_url")
-    job = Job(image_url=req.image_url, script=req.script, voice=req.voice,
-              audio_url=req.audio_url, to_email=req.to_email, order_name=req.order_name)
-    talk = did_create_talk(job)
-    talk_id = talk.get("id")
-    if talk_id:
-        _jobs_upsert(talk_id, {"id": talk_id, "provider": "d-id", "status": "submitted",
-                               "to_email": req.to_email, "order_name": req.order_name, "raw": talk})
-        bg.add_task(poll_and_notify_did, job, talk_id)
-    return {"ok": True, "provider": "d-id", "talk_id": talk_id, "raw": talk}
-
-@app.post("/api/manual/avatar-text")
-async def manual_avatar_text(req: ManualAvatarTextReq, bg: BackgroundTasks, _=Depends(require_admin_header)):
-    vid = heygen_submit_text(req.script, req.avatar_id, req.voice_id)
-    _jobs_upsert(vid, {"id": vid, "provider": "heygen", "status": "submitted",
-                       "to_email": req.to_email, "order_name": req.order_name})
-    bg.add_task(poll_and_notify_heygen, vid, req.to_email, req.order_name)
-    return {"ok": True, "provider": "heygen", "video_id": vid}
-
-@app.post("/api/manual/avatar-audio")
-async def manual_avatar_audio(req: ManualAvatarAudioReq, bg: BackgroundTasks, _=Depends(require_admin_header)):
-    vid = heygen_submit_audio(req.audio_url, req.avatar_id)
-    _jobs_upsert(vid, {"id": vid, "provider": "heygen", "status": "submitted",
-                       "to_email": req.to_email, "order_name": req.order_name})
-    bg.add_task(poll_and_notify_heygen, vid, req.to_email, req.order_name)
-    return {"ok": True, "provider": "heygen", "video_id": vid}
