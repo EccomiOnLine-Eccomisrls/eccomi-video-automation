@@ -12,6 +12,9 @@ FROM_EMAIL = os.getenv("FROM_EMAIL", "Eccomi Video <onboarding@resend.dev>")
 SHOPIFY_WEBHOOK_SECRET = os.getenv("SHOPIFY_WEBHOOK_SECRET", "")
 VERIFY_SHOPIFY_HMAC = os.getenv("VERIFY_SHOPIFY_HMAC", "false").lower() == "true"
 
+HEYGEN_KEY = os.getenv("HEYGEN_API_KEY", "")
+HEYGEN_AVATAR = os.getenv("HEYGEN_AVATAR_ID", "")
+
 # ==== RESEND ====
 if RESEND_KEY:
     resend.api_key = RESEND_KEY
