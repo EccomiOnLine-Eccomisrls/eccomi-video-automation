@@ -1,7 +1,7 @@
-fastapi
-uvicorn
-gunicorn
-python-dotenv
-requests
-pydantic
-resend
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+gunicorn==23.0.0
+python-dotenv==1.0.1
+requests==2.32.3
+pydantic==1.10.18
+resend==2.4.0
