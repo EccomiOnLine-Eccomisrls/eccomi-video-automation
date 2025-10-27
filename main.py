@@ -17,7 +17,7 @@ HEYGEN_AVATAR = os.getenv("HEYGEN_AVATAR_ID", "")
 HEYGEN_VOICE_ID = os.getenv("HEYGEN_VOICE_ID", "it_male_energetic")
 
 ELEVEN_KEY = os.getenv("ELEVENLABS_API_KEY", "")
-ELEVEN_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")   # opzionale
+ELEVEN_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
 
 if RESEND_KEY:
     resend.api_key = RESEND_KEY
@@ -26,20 +26,30 @@ if RESEND_KEY:
 app = FastAPI(title="Eccomi Video Automation", version="1.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://www.eccomionline.com","https://eccomionline.com","*"],
-    allow_methods=["*"], allow_headers=["*"],
+    allow_origins=["https://www.eccomionline.com", "https://eccomionline.com", "*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # ---------- MODELLI ----------
 class Job(BaseModel):
     image_url: str
-    script: Optional[str] = None      # testo se non passi audio_url
-    voice: Optional[str] = "ms:it-IT-GiuseppeNeural"  # "ms:<VOICE>" o "eleven:<VOICE_ID>"
+    script: Optional[str] = None                  # testo se non passi audio_url
+    voice: Optional[str] = "ms:it-IT-GiuseppeNeural"  # "ms:<VOICE>" | "eleven:<VOICE_ID>"
     audio_url: Optional[str] = None
     to_email: str
     order_name: Optional[str] = None
 
-# ---------- UTILS ----------
+class HeygenText(BaseModel):
+    script: str
+    avatar_id: Optional[str] = None
+    voice_id: Optional[str] = None
+
+class HeygenAudio(BaseModel):
+    audio_url: str
+    avatar_id: Optional[str] = None
+
+# ---------- EMAIL ----------
 def send_email(to_email: str, subject: str, html: str):
     if not RESEND_KEY:
         print("⚠️ RESEND_API_KEY mancante: salto invio email")
@@ -50,29 +60,34 @@ def send_email(to_email: str, subject: str, html: str):
     except Exception as e:
         print("❌ ERRORE invio email:", e)
 
-# === D-ID ===
+# ---------- D-ID ----------
 def did_headers():
     if not DID_KEY:
         raise HTTPException(500, "D_ID_API_KEY mancante")
-    return {"Authorization": f"Basic {base64.b64encode((DID_KEY+':').encode()).decode()}",
-            "Content-Type": "application/json"}
+    # Basic "<api_key>:"
+    token = base64.b64encode((DID_KEY + ":").encode("utf-8")).decode("utf-8")
+    return {"Authorization": f"Basic {token}", "Content-Type": "application/json"}
 
 def make_did_payload(job: Job) -> Dict[str, Any]:
     payload = {"source_url": job.image_url, "config": {"stitch": True}}
     if job.audio_url:
         payload["audio_url"] = job.audio_url
     else:
-        if job.voice and job.voice.startswith("eleven:"):
-            provider = {"type": "elevenlabs", "voice_id": job.voice.split(":",1)[1]}
+        if (job.voice or "").startswith("eleven:"):
+            provider = {"type": "elevenlabs", "voice_id": job.voice.split(":", 1)[1]}
         else:
-            voice_id = job.voice.split(":",1)[1] if ":" in job.voice else "it-IT-GiuseppeNeural"
+            voice_id = job.voice.split(":", 1)[1] if ":" in (job.voice or "") else "it-IT-GiuseppeNeural"
             provider = {"type": "microsoft", "voice_id": voice_id}
-        payload["script"] = {"type": "text", "input": job.script or "Ciao! Il tuo video è pronto.", "provider": provider}
+        payload["script"] = {
+            "type": "text",
+            "input": job.script or "Ciao! Il tuo video è pronto.",
+            "provider": provider
+        }
     return payload
 
 def did_create_talk(job: Job) -> Dict[str, Any]:
     r = requests.post("https://api.d-id.com/talks", headers=did_headers(), json=make_did_payload(job), timeout=90)
-    if r.status_code not in (200,201):
+    if r.status_code not in (200, 201):
         raise HTTPException(r.status_code, f"D-ID create error: {r.text}")
     return r.json()
 
@@ -89,56 +104,85 @@ def poll_and_notify_did(job: Job, talk_id: str, max_wait_sec: int = 600, every_s
         st = s.get("status")
         if st == "done" and s.get("result_url"):
             video_url = s["result_url"]
-            html = f"""<p>Ciao! 👋</p><p>Il tuo <b>Video Parlante AI</b> è pronto.</p>
-                       <p><a href="{video_url}" target="_blank">Scarica il video</a></p>"""
+            html = (f'<p>Ciao! 👋</p><p>Il tuo <b>Video Parlante AI</b> è pronto.</p>'
+                    f'<p><a href="{video_url}" target="_blank">Scarica il video</a></p>')
             send_email(job.to_email, f"Video AI pronto — Ordine {job.order_name or ''}", html)
             return
-        if st in ("error","failed"):
+        if st in ("error", "failed"):
             send_email(job.to_email, f"Problema con il tuo Video AI — Ordine {job.order_name or ''}",
                        "<p>Si è verificato un errore. Ti contatteremo a breve.</p>")
             return
-        time.sleep(every_sec); waited += every_sec
+        time.sleep(every_sec)
+        waited += every_sec
     send_email(job.to_email, f"Stiamo completando il tuo Video AI — Ordine {job.order_name or ''}",
                "<p>La generazione richiede più tempo del previsto. Ti avviseremo appena pronto.</p>")
 
-# === HeyGen (avatar pronti) ===
-def heygen_submit_text(script: str, avatar_id: Optional[str] = None, voice_id: Optional[str] = None) -> str:
-    if not HEYGEN_KEY: raise HTTPException(500, "HEYGEN_API_KEY mancante")
-    aid = avatar_id or HEYGEN_AVATAR
-    if not aid: raise HTTPException(500, "HEYGEN_AVATAR_ID mancante")
+# ---------- HEYGEN (v2 con fallback v1) ----------
+def _heygen_headers():
+    if not HEYGEN_KEY:
+        raise HTTPException(500, "HEYGEN_API_KEY mancante")
+    return {"X-Api-Key": HEYGEN_KEY, "Content-Type": "application/json"}
 
-    url = "https://api.heygen.com/v1/video.submit"
-    headers = {"X-Api-Key": HEYGEN_KEY, "Content-Type": "application/json"}
-    data = {
+def _ensure_avatar(aid: Optional[str]) -> str:
+    aid = aid or HEYGEN_AVATAR
+    if not aid:
+        raise HTTPException(500, "HEYGEN_AVATAR_ID mancante")
+    return aid
+
+def heygen_submit_text(script: str, avatar_id: Optional[str] = None, voice_id: Optional[str] = None) -> str:
+    aid = _ensure_avatar(avatar_id)
+    payload = {
         "avatar_id": aid,
         "script": {"type": "text", "input_text": script, "voice_id": (voice_id or HEYGEN_VOICE_ID)},
         "test": False, "caption": False, "aspect_ratio": "9:16", "resolution": "720p"
     }
-    r = requests.post(url, json=data, headers=headers, timeout=120)
-    if r.status_code != 200:
-        raise HTTPException(r.status_code, f"HeyGen submit error: {r.text}")
-    return r.json().get("data", {}).get("video_id")
+    # v2
+    r = requests.post("https://api.heygen.com/v2/video/generate", json=payload, headers=_heygen_headers(), timeout=120)
+    if r.status_code == 200:
+        data = r.json().get("data", {})
+        vid = data.get("video_id") or data.get("id")
+        if vid:
+            return vid
+    # fallback v1
+    r2 = requests.post("https://api.heygen.com/v1/video.submit", json=payload, headers=_heygen_headers(), timeout=120)
+    if r2.status_code == 200:
+        data = r2.json().get("data", {})
+        vid = data.get("video_id") or data.get("id")
+        if vid:
+            return vid
+    raise HTTPException(502, f"HeyGen submit error: v2={r.status_code} {r.text} | v1={r2.status_code} {r2.text}")
 
 def heygen_submit_audio(audio_url: str, avatar_id: Optional[str] = None) -> str:
-    if not HEYGEN_KEY: raise HTTPException(500, "HEYGEN_API_KEY mancante")
-    aid = avatar_id or HEYGEN_AVATAR
-    if not aid: raise HTTPException(500, "HEYGEN_AVATAR_ID mancante")
-
-    url = "https://api.heygen.com/v1/video.submit"
-    headers = {"X-Api-Key": HEYGEN_KEY, "Content-Type": "application/json"}
-    data = {"avatar_id": aid, "audio": {"type":"mp3","source":"url","url": audio_url},
-            "test": False, "caption": False, "aspect_ratio": "9:16", "resolution":"720p"}
-    r = requests.post(url, json=data, headers=headers, timeout=120)
-    if r.status_code != 200:
-        raise HTTPException(r.status_code, f"HeyGen submit error: {r.text}")
-    return r.json().get("data", {}).get("video_id")
+    aid = _ensure_avatar(avatar_id)
+    payload = {
+        "avatar_id": aid,
+        "audio": {"type": "mp3", "source": "url", "url": audio_url},
+        "test": False, "caption": False, "aspect_ratio": "9:16", "resolution": "720p"
+    }
+    r = requests.post("https://api.heygen.com/v2/video/generate", json=payload, headers=_heygen_headers(), timeout=120)
+    if r.status_code == 200:
+        data = r.json().get("data", {})
+        vid = data.get("video_id") or data.get("id")
+        if vid:
+            return vid
+    r2 = requests.post("https://api.heygen.com/v1/video.submit", json=payload, headers=_heygen_headers(), timeout=120)
+    if r2.status_code == 200:
+        data = r2.json().get("data", {})
+        vid = data.get("video_id") or data.get("id")
+        if vid:
+            return vid
+    raise HTTPException(502, f"HeyGen submit error: v2={r.status_code} {r.text} | v1={r2.status_code} {r2.text}")
 
 def heygen_status(video_id: str) -> Dict[str, Any]:
-    headers = {"X-Api-Key": HEYGEN_KEY}
-    r = requests.get(f"https://api.heygen.com/v1/video.status?video_id={video_id}", headers=headers, timeout=60)
-    if r.status_code != 200:
-        raise HTTPException(r.status_code, f"HeyGen status error: {r.text}")
-    return r.json()
+    r = requests.get(f"https://api.heygen.com/v2/video/status?video_id={video_id}",
+                     headers=_heygen_headers(), timeout=60)
+    if r.status_code == 200:
+        return r.json()
+    r2 = requests.get(f"https://api.heygen.com/v1/video.status?video_id={video_id}",
+                      headers=_heygen_headers(), timeout=60)
+    if r2.status_code == 200:
+        return r2.json()
+    raise HTTPException(502, f"HeyGen status error: v2={r.status_code} {r.text} | v1={r2.status_code} {r2.text}")
 
 # ---------- HMAC Shopify ----------
 def verify_shopify_hmac(request: Request, raw_body: bytes):
@@ -165,6 +209,7 @@ def diag_env():
 
 # FOTO → VIDEO (D-ID)
 @app.post("/api/jobs/photo")
+@app.post("/api/jobs")  # compatibilità
 async def create_job_photo(job: Job, bg: BackgroundTasks):
     talk = did_create_talk(job)
     talk_id = talk.get("id")
@@ -173,21 +218,12 @@ async def create_job_photo(job: Job, bg: BackgroundTasks):
     return {"ok": True, "provider": "d-id", "talk": talk}
 
 # AVATAR HEYGEN (testo)
-class HeygenText(BaseModel):
-    script: str
-    avatar_id: Optional[str] = None
-    voice_id: Optional[str] = None
-
 @app.post("/api/heygen/submit")
 def heygen_submit_endpoint(body: HeygenText):
     vid = heygen_submit_text(body.script, body.avatar_id, body.voice_id)
     return {"ok": True, "provider": "heygen", "video_id": vid}
 
 # AVATAR HEYGEN (audio url)
-class HeygenAudio(BaseModel):
-    audio_url: str
-    avatar_id: Optional[str] = None
-
 @app.post("/api/heygen/submit-audio")
 def heygen_submit_audio_endpoint(body: HeygenAudio):
     vid = heygen_submit_audio(body.audio_url, body.avatar_id)
@@ -197,7 +233,7 @@ def heygen_submit_audio_endpoint(body: HeygenAudio):
 def heygen_status_endpoint(video_id: str):
     return heygen_status(video_id)
 
-# Shopify: route in base al “Tipo”
+# Shopify hook (smista in base ai properties)
 @app.post("/api/hooks/shopify")
 async def shopify_hook(request: Request, bg: BackgroundTasks):
     raw = await request.body()
@@ -218,14 +254,15 @@ async def shopify_hook(request: Request, bg: BackgroundTasks):
         audio_url = props.get("Audio")
 
         if tipo == "avatar":
-            voice_id = HEYGEN_VOICE_ID if voice_sel.lower().startswith("uomo") else "it_female_calm"
+            voice_id = HEYGEN_VOICE_ID if str(voice_sel).lower().startswith("uomo") else "it_female_calm"
             if audio_url:
                 video_id = heygen_submit_audio(audio_url, None)
             else:
-                if not script: continue
+                if not script: 
+                    continue
                 video_id = heygen_submit_text(script, None, voice_id)
-            jobs_created.append({"line_item_id": li.get("id"), "provider":"heygen", "video_id": video_id})
-            # opzionale: potresti fare polling lato client con /api/heygen/status
+            jobs_created.append({"line_item_id": li.get("id"), "provider": "heygen", "video_id": video_id})
+            # polling lato client con /api/heygen/status
         else:
             # default: FOTO → D-ID
             if not image_url or (not script and not audio_url) or not to_email:
@@ -233,7 +270,7 @@ async def shopify_hook(request: Request, bg: BackgroundTasks):
             voice = "ms:it-IT-GiuseppeNeural"
             if str(voice_sel).lower().startswith("don"):
                 voice = "ms:it-IT-IsabellaNeural"
-            if voice_sel.startswith("eleven:"):
+            if str(voice_sel).startswith("eleven:"):
                 voice = voice_sel
             job = Job(image_url=image_url, script=script, voice=voice, audio_url=audio_url,
                       to_email=to_email, order_name=str(order_name))
@@ -241,6 +278,6 @@ async def shopify_hook(request: Request, bg: BackgroundTasks):
             talk_id = talk.get("id")
             if talk_id:
                 bg.add_task(poll_and_notify_did, job, talk_id)
-            jobs_created.append({"line_item_id": li.get("id"), "provider":"d-id", "talk": talk})
+            jobs_created.append({"line_item_id": li.get("id"), "provider": "d-id", "talk": talk})
 
     return {"ok": True, "jobs": jobs_created}
