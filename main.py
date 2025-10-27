@@ -453,61 +453,75 @@ def admin_resend_email(job_id: str, _: bool = Depends(require_admin_header)):
 # DASHBOARD (usa Bearer header nelle fetch)
 # =========================
 @app.get("/dashboard", response_class=HTMLResponse)
-def dashboard_page(token: str):
-    # Solo per passare il token al client che lo userà come Bearer
-    if not ADMIN_TOKEN or token != ADMIN_TOKEN:
-        return HTMLResponse("<p>Unauthorized</p>", status_code=401)
-    return f"""
+def dashboard_page():
+    # Non controlliamo più il token a livello di URL.
+    # L'autorizzazione vera avviene sulle API via header Bearer.
+    return """
 <!doctype html><html lang="it"><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Eccomi Video — Dashboard</title>
 <style>
-body{{font-family:system-ui,Inter,sans-serif;margin:24px}}
-h1{{margin:0 0 12px}} table{{border-collapse:collapse;width:100%}}
-td,th{{border:1px solid #e5e7eb;padding:8px;font-size:14px}}
-.badge{{padding:.2rem .5rem;border-radius:.4rem;background:#eee}}
-.btn{{padding:.35rem .6rem;border:1px solid #ddd;border-radius:.4rem;background:#fafafa;cursor:pointer}}
-.btn:disabled{{opacity:.5;cursor:not-allowed}} tr:hover{{background:#fafafa}}
-small{{color:#666}}
+body{font-family:system-ui,Inter,sans-serif;margin:24px}
+h1{margin:0 0 12px} table{border-collapse:collapse;width:100%}
+td,th{border:1px solid #e5e7eb;padding:8px;font-size:14px}
+.badge{padding:.2rem .5rem;border-radius:.4rem;background:#eee}
+.btn{padding:.35rem .6rem;border:1px solid #ddd;border-radius:.4rem;background:#fafafa;cursor:pointer}
+.btn:disabled{opacity:.5;cursor:not-allowed} tr:hover{background:#fafafa}
+small{color:#666}
 </style>
 <h1>Eccomi Video — Dashboard</h1>
 <p><small>Auto-refresh 6s · <a href="#" id="refresh">Aggiorna ora</a></small></p>
 <table id="jobs"><thead>
 <tr><th>ID</th><th>Provider</th><th>Status</th><th>Video</th><th>Email</th><th>Ordine</th><th>Azioni</th></tr>
 </thead><tbody></tbody></table>
+
 <script>
-const token = {json.dumps(token)!r};
-async function load(){{
-  const r = await fetch(`/api/admin/jobs`, {{ headers: {{ "Authorization": `Bearer ${'{'}token{'}'}` }} }});
-  if(!r.ok){{ document.body.innerHTML = "<p>Unauthorized</p>"; return; }}
-  const data = await r.json();
-  const tbody = document.querySelector("#jobs tbody");
-  tbody.innerHTML = "";
-  for(const j of (data.jobs||[])){{
-    const tr = document.createElement("tr");
-    const v = j.video_url ? `<a href="${'{'}j.video_url{'}'}" target="_blank">apri</a>` : "";
-    tr.innerHTML = `
-      <td><code>${'{'}j.id||""{'}'}</code><br><small>${'{'}j.updated_at||""{'}'}</small></td>
-      <td>${'{'}j.provider||""{'}'}</td>
-      <td><span class="badge">${'{'}j.status||""{'}'}</span></td>
-      <td>${'{'}v{'}'}</td>
-      <td>${'{'}j.to_email||""{'}'}</td>
-      <td>${'{'}j.order_name||""{'}'}</td>
-      <td><button class="btn" ${'{'}j.video_url?"":"disabled"{'}'} onclick="resend('${'{'}j.id{'}'}')">Re-invia email</button></td>
-    `;
-    tbody.appendChild(tr);
-  }}
-}}
-async function resend(id){{
-  const r = await fetch(`/api/admin/resend-email/${'{'}encodeURIComponent(id){'}'}`, {{
-    method:"POST",
-    headers: {{ "Authorization": `Bearer ${'{'}token{'}'}` }}
-  }});
-  alert(r.ok ? "Email inviata" : "Errore reinvio");
-}}
-document.getElementById("refresh").onclick = (e)=>{{ e.preventDefault(); load(); }};
-load(); setInterval(load, 6000);
-</script></html>
+function askToken(){
+  // 1) prova query ?token=...
+  let tk = new URLSearchParams(location.search).get("token");
+  // 2) poi sessionStorage
+  if(!tk) tk = sessionStorage.getItem("eccomi_admin_token") || "";
+  // 3) se ancora vuoto, prompt
+  if(!tk) tk = prompt("Inserisci ADMIN_TOKEN");
+  if(!tk) { document.body.innerHTML = "<p>Token mancante.</p>"; return null; }
+  sessionStorage.setItem("eccomi_admin_token", tk);
+  return tk;
+}
+const token = askToken();
+if(token){
+  async function load(){
+    const r = await fetch('/api/admin/jobs', { headers: { Authorization: `Bearer ${token}` }});
+    if(!r.ok){ document.body.innerHTML = "<p>Unauthorized</p>"; return; }
+    const data = await r.json();
+    const tbody = document.querySelector("#jobs tbody");
+    tbody.innerHTML = "";
+    for(const j of (data.jobs||[])){
+      const tr = document.createElement("tr");
+      const v = j.video_url ? `<a href="${j.video_url}" target="_blank">apri</a>` : "";
+      tr.innerHTML = `
+        <td><code>${j.id||""}</code><br><small>${j.updated_at||""}</small></td>
+        <td>${j.provider||""}</td>
+        <td><span class="badge">${j.status||""}</span></td>
+        <td>${v}</td>
+        <td>${j.to_email||""}</td>
+        <td>${j.order_name||""}</td>
+        <td><button class="btn" ${j.video_url?"":"disabled"} onclick="resend('${j.id}')">Re-invia email</button></td>
+      `;
+      tbody.appendChild(tr);
+    }
+  }
+  async function resend(id){
+    const r = await fetch(`/api/admin/resend-email/${encodeURIComponent(id)}`, {
+      method:"POST", headers: { Authorization: `Bearer ${token}` }
+    });
+    alert(r.ok ? "Email inviata" : "Errore reinvio");
+  }
+  window.resend = resend;
+  document.getElementById("refresh").onclick = (e)=>{ e.preventDefault(); load(); };
+  load(); setInterval(load, 6000);
+}
+</script>
+</html>
 """
 
 # =========================
