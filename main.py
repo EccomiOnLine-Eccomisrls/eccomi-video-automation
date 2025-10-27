@@ -67,103 +67,61 @@ def verify_shopify_hmac(request: Request, raw_body: bytes):
     digest = hmac.new(SHOPIFY_WEBHOOK_SECRET.encode("utf-8"), raw_body, hashlib.sha256).digest()
     return base64.b64encode(digest).decode() == hmac_header
 
-# ===== HEYGEN =====
-def _pick_heygen_voice(v: Optional[str]) -> str:
-    if not v:
-        return HEYGEN_VOICE_ID
-    if v.startswith("heygen:"):
-        return v.split(":", 1)[1]
-    if ":" in v:
-        return HEYGEN_VOICE_ID
-    return v
+# ==== HEYGEN (v2) ====
+HEYGEN_KEY = os.getenv("HEYGEN_API_KEY", "")
+HEYGEN_AVATAR = os.getenv("HEYGEN_AVATAR_ID", "")
+HEYGEN_VOICE_ID = os.getenv("HEYGEN_VOICE_ID", "")  # deve essere un vero voice_id HeyGen (stringa lunga esadecimale)
 
-def _req(method: str, url: str, **kw):
-    # timeout duro per non bloccare
-    kw.setdefault("timeout", 20)
-    try:
-        dbg(method, url)
-        r = requests.request(method, url, **kw)
-        dbg("resp", r.status_code, r.text[:300])
-        return r
-    except requests.Timeout:
-        raise HTTPException(504, "Timeout verso provider")
-    except Exception as e:
-        raise HTTPException(502, f"Errore rete: {e}")
-
-def heygen_submit(script: Optional[str],
-                  audio_url: Optional[str],
-                  voice_id: Optional[str] = None,
-                  avatar_id: Optional[str] = None,
-                  test_mode: bool = False) -> str:
+def heygen_generate(script: str, voice_id: Optional[str] = None, avatar_id: Optional[str] = None) -> str:
     if not HEYGEN_KEY:
         raise HTTPException(500, "HEYGEN_API_KEY mancante")
     aid = avatar_id or HEYGEN_AVATAR
     if not aid:
         raise HTTPException(500, "HEYGEN_AVATAR_ID mancante")
-    if not audio_url and not script:
-        raise HTTPException(422, "Fornisci 'script' oppure 'audio_url'")
 
-    url = "https://api.heygen.com/v1/video.submit"
-    headers = {"X-Api-Key": HEYGEN_KEY, "Content-Type": "application/json"}
-    data: Dict[str, Any] = {
-        "avatar_id": aid,
-        "test": bool(test_mode),
-        "caption": False,
-        "aspect_ratio": "9:16",
-        "resolution": "720p",
+    body = {
+        "video_inputs": [{
+            "character": {"type": "avatar", "avatar_id": aid, "avatar_style": "normal"},
+            "voice": {"type": "text", "input_text": script, "voice_id": voice_id or HEYGEN_VOICE_ID},
+            "background": {"type": "color", "value": "#000000"}
+        }],
+        # 9:16
+        "dimension": {"width": 1080, "height": 1920}
     }
-    if audio_url:
-        data["audio"] = {"type": "mp3", "source": "url", "url": audio_url}
-    else:
-        data["script"] = {"type": "text", "input_text": script, "voice_id": voice_id or HEYGEN_VOICE_ID}
-
-    r = _req("POST", url, json=data, headers=headers)
+    headers = {"X-Api-Key": HEYGEN_KEY, "Content-Type": "application/json"}
+    r = requests.post("https://api.heygen.com/v2/video/generate", json=body, headers=headers, timeout=120)
     if r.status_code != 200:
         raise HTTPException(r.status_code, f"HeyGen submit error: {r.text}")
-    js = r.json()
-    return (js.get("data") or {}).get("video_id") or js.get("video_id") or js.get("request_id") or ""
+    return r.json().get("data", {}).get("video_id")
 
-def heygen_status(video_id: str) -> Dict[str, Any]:
-    url = f"https://api.heygen.com/v1/video.status?video_id={video_id}"
+def heygen_status(video_id: str) -> dict:
     headers = {"X-Api-Key": HEYGEN_KEY}
-    r = _req("GET", url, headers=headers)
+    r = requests.get(f"https://api.heygen.com/v1/video_status.get?video_id={video_id}", headers=headers, timeout=60)
     if r.status_code != 200:
         raise HTTPException(r.status_code, f"HeyGen status error: {r.text}")
     return r.json()
 
-def _extract_video_url(status_json: Dict[str, Any]) -> Optional[str]:
-    data = status_json.get("data") or {}
-    return data.get("video_url") or data.get("download_url") or data.get("url")
-
-def poll_and_notify_heygen(job: Job, video_id: str, max_wait_sec: int = 900, every_sec: int = 5):
+def heygen_poll_and_email(to_email: str, order_name: Optional[str], video_id: str, max_wait_sec: int = 900, every_sec: int = 5):
     waited = 0
     while waited <= max_wait_sec:
         st = heygen_status(video_id)
-        data = st.get("data") or {}
-        status = data.get("status")
-        dbg("poll", video_id, status)
-        if status in ("completed", "succeeded", "success"):
-            url = _extract_video_url(st)
-            if url:
-                html = f"""
-                <p>Ciao! 👋</p>
-                <p>Il tuo <b>Video Parlante AI</b> è pronto.</p>
-                <p><a href="{url}" target="_blank">Scarica/guarda il video qui</a></p>
-                <p>Grazie da Eccomi OnLine!</p>
-                """
-                send_email(job.to_email, f"Video AI pronto — Ordine {job.order_name or ''}", html)
+        data = st.get("data", {})
+        if data.get("status") == "completed" and data.get("video_url"):
+            video_url = data["video_url"]
+            html = f"""
+            <p>Ciao! 👋</p>
+            <p>Il tuo <b>Video AI</b> è pronto.</p>
+            <p><a href="{video_url}" target="_blank">Scarica il video</a></p>
+            <p>Grazie da Eccomi OnLine!</p>
+            """
+            send_email(to_email, f"Video AI pronto — Ordine {order_name or ''}", html)
             return
-        if status in ("failed", "error"):
-            send_email(job.to_email,
-                       f"Problema con il tuo Video AI — Ordine {job.order_name or ''}",
-                       "<p>Si è verificato un errore durante la generazione. Ti contatteremo a breve.</p>")
+        if data.get("status") == "failed":
+            send_email(to_email, f"Errore Video AI — Ordine {order_name or ''}", "<p>La generazione non è riuscita.</p>")
             return
         time.sleep(every_sec)
         waited += every_sec
-    send_email(job.to_email,
-               f"Stiamo completando il tuo Video AI — Ordine {job.order_name or ''}",
-               "<p>La generazione richiede più tempo del previsto. Ti avviseremo non appena sarà pronto.</p>")
-
+        
 # ===== ENDPOINTS =====
 @app.get("/api/health")
 def health():
