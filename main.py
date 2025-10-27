@@ -38,11 +38,41 @@ class Job(BaseModel):
     order_name: Optional[str] = None
 
 # ==== UTILS ====
-def did_headers():
-    if not DID_KEY:
-        raise HTTPException(500, "D_ID_API_KEY mancante")
-    token = base64.b64encode((DID_KEY + ":").encode()).decode()
-    return {"Authorization": f"Basic {token}", "Content-Type": "application/json"}
+# ---------- HEYGEN ----------
+def heygen_submit(script: str, avatar_id: Optional[str] = None, audio_url: Optional[str] = None):
+    if not HEYGEN_KEY:
+        raise HTTPException(500, "HEYGEN_API_KEY mancante")
+    aid = avatar_id or HEYGEN_AVATAR
+    if not aid:
+        raise HTTPException(500, "HEYGEN_AVATAR_ID mancante")
+
+    url = "https://api.heygen.com/v1/video.submit"
+    headers = {"X-Api-Key": HEYGEN_KEY, "Content-Type": "application/json"}
+
+    data = {
+        "avatar_id": aid,
+        "test": False,
+        "caption": False,
+        "aspect_ratio": "9:16"
+    }
+
+    if audio_url:
+        data["audio"] = {"type": "mp3", "source": "url", "url": audio_url}
+    else:
+        data["script"] = {"type": "text", "input_text": script}
+
+    r = requests.post(url, json=data, headers=headers, timeout=120)
+    if r.status_code != 200:
+        raise HTTPException(r.status_code, f"HeyGen submit error: {r.text}")
+    return r.json()
+
+def heygen_status(video_id: str):
+    url = f"https://api.heygen.com/v1/video.status?video_id={video_id}"
+    headers = {"X-Api-Key": HEYGEN_KEY}
+    r = requests.get(url, headers=headers, timeout=60)
+    if r.status_code != 200:
+        raise HTTPException(r.status_code, f"HeyGen status error: {r.text}")
+    return r.json()
 
 def send_email(to_email: str, subject: str, html: str):
     if not RESEND_KEY:
