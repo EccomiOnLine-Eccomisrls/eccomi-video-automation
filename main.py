@@ -5,82 +5,40 @@ from pydantic import BaseModel
 from typing import Optional, Dict, Any
 import resend
 
-# ==== ENV ====
-DID_KEY = os.getenv("D_ID_API_KEY", "")
+# ========= ENV =========
 RESEND_KEY = os.getenv("RESEND_API_KEY", "")
 FROM_EMAIL = os.getenv("FROM_EMAIL", "Eccomi Video <onboarding@resend.dev>")
+
 SHOPIFY_WEBHOOK_SECRET = os.getenv("SHOPIFY_WEBHOOK_SECRET", "")
 VERIFY_SHOPIFY_HMAC = os.getenv("VERIFY_SHOPIFY_HMAC", "false").lower() == "true"
 
 HEYGEN_KEY = os.getenv("HEYGEN_API_KEY", "")
 HEYGEN_AVATAR = os.getenv("HEYGEN_AVATAR_ID", "")
+HEYGEN_VOICE_ID = os.getenv("HEYGEN_VOICE_ID", "it_male_energetic")  # default consigliato
 
-# ==== RESEND ====
+# ========= RESEND =========
 if RESEND_KEY:
     resend.api_key = RESEND_KEY
 
-# ==== APP ====
+# ========= APP =========
 app = FastAPI(title="Eccomi Video Automation", version="1.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://www.eccomionline.com","https://eccomionline.com","*"],
+    allow_origins=["https://www.eccomionline.com", "https://eccomionline.com", "*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ==== MODELLI ====
+# ========= MODELLI =========
 class Job(BaseModel):
-    image_url: str
-    script: Optional[str] = None
-    voice: Optional[str] = "ms:it-IT-GiuseppeNeural"  # "ms:<VOICE>" oppure "eleven:<VOICE_ID>"
-    audio_url: Optional[str] = None
+    image_url: Optional[str] = None         # per ora non usata con HeyGen Avatar
+    script: Optional[str] = None            # richiesto se non si passa audio_url
+    voice: Optional[str] = None             # es. "heygen:it_male_energetic" oppure "it_male_energetic"
+    audio_url: Optional[str] = None         # mp3 pubblico opzionale
     to_email: str
     order_name: Optional[str] = None
 
-# ==== UTILS ====
-# ==== HEYGEN ====
-HEYGEN_KEY = os.getenv("HEYGEN_API_KEY", "")
-HEYGEN_AVATAR = os.getenv("HEYGEN_AVATAR_ID", "")
-HEYGEN_VOICE_ID = os.getenv("HEYGEN_VOICE_ID", "it_male_energetic")  # default
-
-def heygen_submit(script: str, order_id: str):
-    if not HEYGEN_KEY:
-        raise HTTPException(500, "HEYGEN_API_KEY mancante")
-    if not HEYGEN_AVATAR:
-        raise HTTPException(500, "HEYGEN_AVATAR_ID mancante")
-
-    url = "https://api.heygen.com/v1/video.submit"
-    headers = {
-        "X-Api-Key": HEYGEN_KEY,
-        "Content-Type": "application/json"
-    }
-    data = {
-        "avatar_id": HEYGEN_AVATAR,
-        "script": {
-            "type": "text",
-            "input_text": script,
-            "voice_id": HEYGEN_VOICE_ID
-        },
-        "test": False,
-        "caption": False,
-        "aspect_ratio": "9:16",
-        "resolution": "720p"
-    }
-
-    r = requests.post(url, json=data, headers=headers, timeout=60)
-    if r.status_code != 200:
-        raise HTTPException(r.status_code, f"HeyGen submit error: {r.text}")
-    res = r.json()
-    return res.get("data", {}).get("video_id")
-
-def heygen_status(video_id: str):
-    url = f"https://api.heygen.com/v1/video.status?video_id={video_id}"
-    headers = {"X-Api-Key": HEYGEN_KEY}
-    r = requests.get(url, headers=headers, timeout=60)
-    if r.status_code != 200:
-        raise HTTPException(r.status_code, f"HeyGen status error: {r.text}")
-    return r.json()
-
+# ========= UTILS =========
 def send_email(to_email: str, subject: str, html: str):
     if not RESEND_KEY:
         print("⚠️ RESEND_API_KEY mancante: salto invio email")
@@ -96,58 +54,6 @@ def send_email(to_email: str, subject: str, html: str):
     except Exception as e:
         print("❌ ERRORE invio email:", e)
 
-def make_did_payload(job: Job) -> Dict[str, Any]:
-    payload = {"source_url": job.image_url, "config": {"stitch": True}}
-    if job.audio_url:
-        payload["audio_url"] = job.audio_url
-    else:
-        # TTS provider
-        if job.voice and job.voice.startswith("eleven:"):
-            provider = {"type": "elevenlabs", "voice_id": job.voice.split(":",1)[1]}
-        else:
-            voice_id = job.voice.split(":",1)[1] if ":" in job.voice else "it-IT-GiuseppeNeural"
-            provider = {"type": "microsoft", "voice_id": voice_id}
-        payload["script"] = {"type": "text", "input": job.script or "Ciao! Il tuo video è pronto.", "provider": provider}
-    return payload
-
-def did_create_talk(job: Job) -> Dict[str, Any]:
-    r = requests.post("https://api.d-id.com/talks", headers=did_headers(), json=make_did_payload(job), timeout=90)
-    if r.status_code not in (200,201):
-        raise HTTPException(r.status_code, f"D-ID create error: {r.text}")
-    return r.json()
-
-def did_status(talk_id: str) -> Dict[str, Any]:
-    r = requests.get(f"https://api.d-id.com/talks/{talk_id}", headers=did_headers(), timeout=60)
-    if r.status_code != 200:
-        raise HTTPException(r.status_code, f"D-ID status error: {r.text}")
-    return r.json()
-
-def poll_and_notify(job: Job, talk_id: str, max_wait_sec: int = 600, every_sec: int = 5):
-    """Poll finché pronto, poi invia email col link video."""
-    waited = 0
-    while waited <= max_wait_sec:
-        status = did_status(talk_id)
-        st = status.get("status")
-        if st == "done" and status.get("result_url"):
-            video_url = status["result_url"]
-            html = f"""
-            <p>Ciao! 👋</p>
-            <p>Il tuo <b>Video Parlante AI</b> è pronto.</p>
-            <p><a href="{video_url}" target="_blank">Scarica il video qui</a></p>
-            <p>Grazie da Eccomi OnLine!</p>
-            """
-            send_email(job.to_email, f"Video AI pronto — Ordine {job.order_name or ''}", html)
-            return
-        if st in ("error","failed"):
-            send_email(job.to_email, f"Problema con il tuo Video AI — Ordine {job.order_name or ''}",
-                       "<p>Si è verificato un errore durante la generazione. Ti contatteremo a breve.</p>")
-            return
-        time.sleep(every_sec)
-        waited += every_sec
-    # timeout
-    send_email(job.to_email, f"Stiamo completando il tuo Video AI — Ordine {job.order_name or ''}",
-               "<p>La generazione richiede più tempo del previsto. Ti avviseremo non appena sarà pronto.</p>")
-
 def verify_shopify_hmac(request: Request, raw_body: bytes):
     if not VERIFY_SHOPIFY_HMAC or not SHOPIFY_WEBHOOK_SECRET:
         return True
@@ -155,18 +61,130 @@ def verify_shopify_hmac(request: Request, raw_body: bytes):
     digest = hmac.new(SHOPIFY_WEBHOOK_SECRET.encode("utf-8"), raw_body, hashlib.sha256).digest()
     return base64.b64encode(digest).decode() == hmac_header
 
-# ==== ENDPOINTS ====
+# ========= HEYGEN =========
+def _pick_heygen_voice(v: Optional[str]) -> str:
+    """
+    Accetta:
+    - "heygen:<id>"
+    - "<id>" (es. it_male_energetic)
+    - altri prefissi (ms:, eleven:) -> fallback a HEYGEN_VOICE_ID
+    """
+    if not v:
+        return HEYGEN_VOICE_ID
+    if v.startswith("heygen:"):
+        return v.split(":", 1)[1]
+    if ":" in v:  # ms:, eleven:, ecc.
+        return HEYGEN_VOICE_ID
+    return v  # già un id HeyGen plausibile
+
+def heygen_submit(script: Optional[str],
+                  audio_url: Optional[str],
+                  voice_id: Optional[str] = None,
+                  avatar_id: Optional[str] = None) -> str:
+    if not HEYGEN_KEY:
+        raise HTTPException(500, "HEYGEN_API_KEY mancante")
+    aid = avatar_id or HEYGEN_AVATAR
+    if not aid:
+        raise HTTPException(500, "HEYGEN_AVATAR_ID mancante")
+
+    if not audio_url and not script:
+        raise HTTPException(422, "Fornisci 'script' oppure 'audio_url'")
+
+    url = "https://api.heygen.com/v1/video.submit"
+    headers = {"X-Api-Key": HEYGEN_KEY, "Content-Type": "application/json"}
+    data: Dict[str, Any] = {
+        "avatar_id": aid,
+        "test": False,
+        "caption": False,
+        "aspect_ratio": "9:16",
+        "resolution": "720p",
+    }
+
+    if audio_url:
+        data["audio"] = {"type": "mp3", "source": "url", "url": audio_url}
+    else:
+        data["script"] = {
+            "type": "text",
+            "input_text": script,
+            "voice_id": voice_id or HEYGEN_VOICE_ID
+        }
+
+    r = requests.post(url, json=data, headers=headers, timeout=120)
+    if r.status_code != 200:
+        raise HTTPException(r.status_code, f"HeyGen submit error: {r.text}")
+    js = r.json()
+    # formati noti: {"data":{"video_id":"..."}}
+    return (js.get("data") or {}).get("video_id") or js.get("video_id") or js.get("request_id") or ""
+
+def heygen_status(video_id: str) -> Dict[str, Any]:
+    url = f"https://api.heygen.com/v1/video.status?video_id={video_id}"
+    headers = {"X-Api-Key": HEYGEN_KEY}
+    r = requests.get(url, headers=headers, timeout=60)
+    if r.status_code != 200:
+        raise HTTPException(r.status_code, f"HeyGen status error: {r.text}")
+    return r.json()
+
+def _extract_video_url(status_json: Dict[str, Any]) -> Optional[str]:
+    data = status_json.get("data") or {}
+    return data.get("video_url") or data.get("download_url") or data.get("url")
+
+def poll_and_notify_heygen(job: Job, video_id: str, max_wait_sec: int = 900, every_sec: int = 5):
+    waited = 0
+    while waited <= max_wait_sec:
+        st = heygen_status(video_id)
+        data = st.get("data") or {}
+        status = data.get("status")
+        if status in ("completed", "succeeded", "success"):
+            url = _extract_video_url(st)
+            if url:
+                html = f"""
+                <p>Ciao! 👋</p>
+                <p>Il tuo <b>Video Parlante AI</b> è pronto.</p>
+                <p><a href="{url}" target="_blank">Scarica/guarda il video qui</a></p>
+                <p>Grazie da Eccomi OnLine!</p>
+                """
+                send_email(job.to_email, f"Video AI pronto — Ordine {job.order_name or ''}", html)
+            return
+        if status in ("failed", "error"):
+            send_email(
+                job.to_email,
+                f"Problema con il tuo Video AI — Ordine {job.order_name or ''}",
+                "<p>Si è verificato un errore durante la generazione. Ti contatteremo a breve.</p>"
+            )
+            return
+        time.sleep(every_sec)
+        waited += every_sec
+
+    # timeout
+    send_email(
+        job.to_email,
+        f"Stiamo completando il tuo Video AI — Ordine {job.order_name or ''}",
+        "<p>La generazione richiede più tempo del previsto. Ti avviseremo non appena sarà pronto.</p>"
+    )
+
+# ========= ENDPOINTS =========
 @app.get("/api/health")
 def health():
     return {"ok": True, "service": "EccomiVideoAutomation", "version": "1.0"}
 
 @app.post("/api/jobs")
 async def create_job(job: Job, bg: BackgroundTasks):
-    talk = did_create_talk(job)
-    talk_id = talk.get("id")
-    if talk_id:
-        bg.add_task(poll_and_notify, job, talk_id)
-    return {"ok": True, "talk": talk}
+    voice_id = _pick_heygen_voice(job.voice)
+    video_id = heygen_submit(
+        script=job.script,
+        audio_url=job.audio_url,
+        voice_id=voice_id,
+        avatar_id=HEYGEN_AVATAR
+    )
+    if not video_id:
+        raise HTTPException(500, "HeyGen non ha restituito un video_id")
+
+    bg.add_task(poll_and_notify_heygen, job, video_id)
+    return {"ok": True, "provider": "heygen", "video_id": video_id}
+
+@app.get("/api/video/status")
+def video_status(video_id: str):
+    return heygen_status(video_id)
 
 @app.post("/api/hooks/shopify")
 async def shopify_hook(request: Request, bg: BackgroundTasks):
@@ -183,23 +201,29 @@ async def shopify_hook(request: Request, bg: BackgroundTasks):
         props = {p.get("name"): p.get("value") for p in li.get("properties", []) if p.get("name")}
         image_url  = props.get("Foto") or props.get("Immagine") or props.get("Image")
         script     = props.get("Testo") or props.get("Script")
-        voice_sel  = props.get("Voce") or "Uomo"
+        voice_sel  = props.get("Voce") or None
         audio_url  = props.get("Audio")
 
-        voice = "ms:it-IT-GiuseppeNeural"  # default Uomo
-        if voice_sel.lower().startswith("don"):
-            voice = "ms:it-IT-IsabellaNeural"
-        if voice_sel.startswith("eleven:"):
-            voice = voice_sel
-
-        if not image_url or (not script and not audio_url) or not to_email:
+        if not to_email or (not script and not audio_url):
             continue
 
-        job = Job(image_url=image_url, script=script, voice=voice, audio_url=audio_url, to_email=to_email, order_name=str(order_name))
-        talk = did_create_talk(job)
-        talk_id = talk.get("id")
-        if talk_id:
-            bg.add_task(poll_and_notify, job, talk_id)
-        jobs_created.append({"line_item_id": li.get("id"), "talk": talk})
+        job = Job(
+            image_url=image_url,
+            script=script,
+            voice=voice_sel,
+            audio_url=audio_url,
+            to_email=to_email,
+            order_name=str(order_name)
+        )
 
-    return {"ok": True, "jobs": jobs_created}
+        v_id = heygen_submit(
+            script=job.script,
+            audio_url=job.audio_url,
+            voice_id=_pick_heygen_voice(job.voice),
+            avatar_id=HEYGEN_AVATAR
+        )
+        if v_id:
+            bg.add_task(poll_and_notify_heygen, job, v_id)
+        jobs_created.append({"line_item_id": li.get("id"), "video_id": v_id})
+
+    return {"ok": True, "provider": "heygen", "jobs": jobs_created}
