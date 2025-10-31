@@ -1,5 +1,5 @@
 import os, hmac, hashlib, base64, time, json, requests
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime
 from threading import Lock
 
@@ -14,10 +14,7 @@ import resend
 # =========================
 DID_KEY = os.getenv("D_ID_API_KEY", "")
 RESEND_KEY = os.getenv("RESEND_API_KEY", "")
-FROM_EMAIL = os.getenv("FROM_EMAIL", "Eccomi Video <onboarding@resend.dev>")
-
-SHOPIFY_WEBHOOK_SECRET = os.getenv("SHOPIFY_WEBHOOK_SECRET", "")
-VERIFY_SHOPIFY_HMAC = os.getenv("VERIFY_SHOPIFY_HMAC", "false").lower() == "true"
+FROM_EMAIL = os.getenv("FROM_EMAIL", "Eccomi Video <info@eccomionline.com>")
 
 HEYGEN_KEY = os.getenv("HEYGEN_API_KEY", "")
 HEYGEN_AVATAR = os.getenv("HEYGEN_AVATAR_ID", "")
@@ -26,34 +23,66 @@ HEYGEN_VOICE_ID = os.getenv("HEYGEN_VOICE_ID", "it_male_energetic")
 ELEVEN_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVEN_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
 
-ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")  # Bearer <ADMIN_TOKEN> per /admin, /manual e /dashboard
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
+
+SHOP_DOMAIN = os.getenv("SHOP_DOMAIN", "")  # es. eccomionline.myshopify.com
+SHOP_ADMIN_TOKEN = os.getenv("SHOP_ADMIN_TOKEN", "")
+SHOPIFY_API_VER = os.getenv("SHOPIFY_API_VER", "2025-10")
+
+DATA_FILE = os.getenv("DATA_FILE", "/mnt/data/jobs.json")
 
 if RESEND_KEY:
     resend.api_key = RESEND_KEY
 
-# Jobs store (in-memory)
+# =========================
+# STORAGE (persistenza leggera)
+# =========================
 JOBS: Dict[str, Dict[str, Any]] = {}
 JOBS_LOCK = Lock()
+
+def _now_iso():
+    return datetime.utcnow().isoformat() + "Z"
+
+def _storage_load():
+    try:
+        if os.path.exists(DATA_FILE):
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            return d if isinstance(d, dict) else {}
+    except Exception as e:
+        print("⚠️ storage load error:", e)
+    return {}
+
+def _storage_save():
+    try:
+        os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(JOBS, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print("⚠️ storage save error:", e)
 
 def _jobs_upsert(job_id: str, data: dict):
     if not job_id:
         return
     with JOBS_LOCK:
-        now = datetime.utcnow().isoformat() + "Z"
         base = JOBS.get(job_id, {})
         base.update(data)
-        base.setdefault("created_at", now)
-        base["updated_at"] = now
+        base.setdefault("created_at", _now_iso())
+        base["updated_at"] = _now_iso()
         JOBS[job_id] = base
+        _storage_save()
 
 def _jobs_list():
     with JOBS_LOCK:
         return sorted(JOBS.values(), key=lambda x: x.get("updated_at",""), reverse=True)
 
+# carica a boot
+JOBS.update(_storage_load())
+
 # =========================
 # APP
 # =========================
-app = FastAPI(title="Eccomi Video Automation", version="2.2")
+app = FastAPI(title="Eccomi Video Automation", version="2.3")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://www.eccomionline.com", "https://eccomionline.com", "*"],
@@ -98,7 +127,7 @@ class HeygenAudio(BaseModel):
     to_email: Optional[str] = None
     order_name: Optional[str] = None
 
-# ordini diretti (senza Shopify)
+# Manual orders (senza Shopify)
 class ManualPhotoReq(BaseModel):
     image_url: str
     script: Optional[str] = None
@@ -134,36 +163,6 @@ def send_email(to_email: str, subject: str, html: str):
         print("❌ ERRORE invio email:", e)
 
 # =========================
-# TEST EMAIL (Resend)
-# =========================
-@app.get("/api/test-email")
-def test_email(to: str = "ciaoeccomionline@gmail.com"):
-    """
-    Invia un'email di test tramite Resend.
-    Puoi cambiare il destinatario con ?to=email@dominio.it
-    """
-    if not RESEND_KEY:
-        raise HTTPException(500, "RESEND_API_KEY mancante")
-    try:
-        subject = "✅ Test Eccomi Video — Resend"
-        html = """
-        <h2>Eccomi Video — Test Email OK</h2>
-        <p>Questa è una mail di test inviata dal backend <b>Eccomi Video Automation</b>.</p>
-        <p>Se la ricevi correttamente, Resend è attivo e configurato 👍</p>
-        <hr>
-        <small>Mittente: Eccomi Video &lt;info@eccomionline.com&gt;</small>
-        """
-        resend.Emails.send({
-            "from": FROM_EMAIL,
-            "to": to,
-            "subject": subject,
-            "html": html
-        })
-        return {"ok": True, "sent_to": to, "from": FROM_EMAIL}
-    except Exception as e:
-        raise HTTPException(500, f"Errore invio email: {e}")
-
-# =========================
 # D-ID (Photo → Talking Video)
 # =========================
 def did_headers():
@@ -186,19 +185,13 @@ def make_did_payload(job: Job) -> Dict[str, Any]:
     return payload
 
 def did_create_talk(job: Job) -> Dict[str, Any]:
-    try:
-        r = requests.post("https://api.d-id.com/talks", headers=did_headers(), json=make_did_payload(job), timeout=90)
-    except requests.RequestException as e:
-        raise HTTPException(502, f"D-ID non raggiungibile: {e}") from e
+    r = requests.post("https://api.d-id.com/talks", headers=did_headers(), json=make_did_payload(job), timeout=90)
     if r.status_code not in (200, 201):
         raise HTTPException(r.status_code, f"D-ID create error: {r.text}")
     return r.json()
 
 def did_status(talk_id: str) -> Dict[str, Any]:
-    try:
-        r = requests.get(f"https://api.d-id.com/talks/{talk_id}", headers=did_headers(), timeout=60)
-    except requests.RequestException as e:
-        raise HTTPException(502, f"D-ID non raggiungibile: {e}") from e
+    r = requests.get(f"https://api.d-id.com/talks/{talk_id}", headers=did_headers(), timeout=60)
     if r.status_code != 200:
         raise HTTPException(r.status_code, f"D-ID status error: {r.text}")
     return r.json()
@@ -254,10 +247,7 @@ def heygen_submit_text(script: str, avatar_id: Optional[str] = None, voice_id: O
         }],
         "test": False, "caption": False, "aspect_ratio": "9:16", "resolution": "720p"
     }
-    try:
-        r = requests.post("https://api.heygen.com/v2/video/generate", headers=_heygen_headers(), json=payload, timeout=120)
-    except requests.RequestException as e:
-        raise HTTPException(502, f"HeyGen non raggiungibile: {e}") from e
+    r = requests.post("https://api.heygen.com/v2/video/generate", headers=_heygen_headers(), json=payload, timeout=120)
     if r.status_code != 200:
         raise HTTPException(r.status_code, f"HeyGen v2 submit error: {r.text}")
     data = r.json().get("data", {})
@@ -275,10 +265,7 @@ def heygen_submit_audio(audio_url: str, avatar_id: Optional[str] = None) -> str:
         }],
         "test": False, "caption": False, "aspect_ratio": "9:16", "resolution": "720p"
     }
-    try:
-        r = requests.post("https://api.heygen.com/v2/video/generate", headers=_heygen_headers(), json=payload, timeout=120)
-    except requests.RequestException as e:
-        raise HTTPException(502, f"HeyGen non raggiungibile: {e}") from e
+    r = requests.post("https://api.heygen.com/v2/video/generate", headers=_heygen_headers(), json=payload, timeout=120)
     if r.status_code != 200:
         raise HTTPException(r.status_code, f"HeyGen v2 submit-audio error: {r.text}")
     data = r.json().get("data", {})
@@ -288,17 +275,10 @@ def heygen_submit_audio(audio_url: str, avatar_id: Optional[str] = None) -> str:
     return vid
 
 def heygen_status(video_id: str) -> Dict[str, Any]:
-    try:
-        r = requests.get(f"https://api.heygen.com/v2/video/status?video_id={video_id}", headers=_heygen_headers(), timeout=60)
-    except requests.RequestException as e:
-        raise HTTPException(502, f"HeyGen non raggiungibile: {e}") from e
+    r = requests.get(f"https://api.heygen.com/v2/video/status?video_id={video_id}", headers=_heygen_headers(), timeout=60)
     if r.status_code == 200:
         return r.json()
-    # fallback v1
-    try:
-        r2 = requests.get(f"https://api.heygen.com/v1/video.status?video_id={video_id}", headers=_heygen_headers(), timeout=60)
-    except requests.RequestException as e:
-        raise HTTPException(502, f"HeyGen non raggiungibile (v1): {e}") from e
+    r2 = requests.get(f"https://api.heygen.com/v1/video.status?video_id={video_id}", headers=_heygen_headers(), timeout=60)
     if r2.status_code == 200:
         return r2.json()
     raise HTTPException(502, f"HeyGen status error: v2={r.status_code} {r.text} | v1={r2.status_code} {r2.text}")
@@ -338,41 +318,29 @@ def poll_and_notify_heygen(video_id: str, to_email: Optional[str], order_name: O
                    "<p>La generazione richiede più tempo del previsto. Ti avviseremo appena pronto.</p>")
 
 # =========================
-# HMAC Shopify
-# =========================
-def verify_shopify_hmac(request: Request, raw_body: bytes):
-    if not VERIFY_SHOPIFY_HMAC or not SHOPIFY_WEBHOOK_SECRET:
-        return True
-    hmac_header = request.headers.get("X-Shopify-Hmac-Sha256")
-    digest = hmac.new(SHOPIFY_WEBHOOK_SECRET.encode("utf-8"), raw_body, hashlib.sha256).digest()
-    return base64.b64encode(digest).decode() == hmac_header
-
-# =========================
 # META & DIAG
 # =========================
 @app.get("/", tags=["meta"])
 def root():
-    return {"ok": True, "service": "EccomiVideoAutomation", "version": "2.2",
+    return {"ok": True, "service": "EccomiVideoAutomation", "version": "2.3",
             "health": "/api/health", "docs": "/docs", "dashboard": "/dashboard"}
 
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon(): return Response(status_code=204)
 
 @app.get("/api/health")
-def health(): return {"ok": True, "service": "EccomiVideoAutomation", "version": "2.2"}
+def health(): return {"ok": True, "service": "EccomiVideoAutomation", "version": "2.3"}
 
 @app.get("/api/diag/env")
 def diag_env():
     return {
+        "RESEND_API_KEY": bool(RESEND_KEY), "FROM_EMAIL": FROM_EMAIL,
         "D_ID_API_KEY": bool(DID_KEY),
-        "RESEND_API_KEY": bool(RESEND_KEY),
-        "FROM_EMAIL": FROM_EMAIL,
-        "HEYGEN_API_KEY": bool(HEYGEN_KEY),
-        "HEYGEN_AVATAR_ID": bool(HEYGEN_AVATAR),
-        "HEYGEN_VOICE_ID": HEYGEN_VOICE_ID,
+        "HEYGEN_API_KEY": bool(HEYGEN_KEY), "HEYGEN_AVATAR_ID": bool(HEYGEN_AVATAR),
         "ELEVENLABS_API_KEY": bool(ELEVEN_KEY),
-        "ELEVENLABS_VOICE_ID": bool(ELEVEN_VOICE_ID),
         "ADMIN_TOKEN": bool(ADMIN_TOKEN),
+        "SHOP_DOMAIN": SHOP_DOMAIN, "SHOP_ADMIN_TOKEN": bool(SHOP_ADMIN_TOKEN),
+        "DATA_FILE": DATA_FILE,
     }
 
 # =========================
@@ -380,13 +348,8 @@ def diag_env():
 # =========================
 @app.post("/api/jobs/photo")
 @app.post("/api/jobs")  # compat
-async def create_job_photo(job: Job, bg: BackgroundTasks):
-    try:
-        talk = did_create_talk(job)
-    except HTTPException as e:
-        if e.status_code == 401:
-            raise HTTPException(401, "D-ID non autorizzato: controlla D_ID_API_KEY") from e
-        raise
+def create_job_photo(job: Job, bg: BackgroundTasks):
+    talk = did_create_talk(job)
     talk_id = talk.get("id")
     if talk_id:
         _jobs_upsert(talk_id, {"id": talk_id, "provider": "d-id", "status": "submitted",
@@ -422,58 +385,6 @@ def heygen_status_endpoint(video_id: str = Query(..., min_length=4)):
     return heygen_status(video_id)
 
 # =========================
-# SHOPIFY WEBHOOK
-# =========================
-@app.post("/api/hooks/shopify")
-async def shopify_hook(request: Request, bg: BackgroundTasks):
-    raw = await request.body()
-    if not verify_shopify_hmac(request, raw):
-        raise HTTPException(401, "Invalid HMAC")
-    payload = json.loads(raw.decode("utf-8"))
-
-    to_email = (payload.get("customer") or {}).get("email") or payload.get("email") or ""
-    order_name = payload.get("name") or payload.get("order_number")
-
-    jobs_created = []
-    for li in payload.get("line_items", []):
-        props = {p.get("name"): p.get("value") for p in li.get("properties", []) if p.get("name")}
-        tipo      = (props.get("Tipo") or props.get("Type") or "").lower()  # "foto" | "avatar"
-        image_url = props.get("Foto") or props.get("Immagine") or props.get("Image")
-        script    = props.get("Testo") or props.get("Script")
-        voice_sel = props.get("Voce") or "Uomo"
-        audio_url = props.get("Audio")
-
-        if tipo == "avatar":
-            voice_id = HEYGEN_VOICE_ID if str(voice_sel).lower().startswith("uomo") else "it_female_calm"
-            if audio_url:
-                video_id = heygen_submit_audio(audio_url, None)
-            else:
-                if not script:
-                    continue
-                video_id = heygen_submit_text(script, None, voice_id)
-            _jobs_upsert(video_id, {"id": video_id, "provider": "heygen", "status": "submitted",
-                                    "to_email": to_email, "order_name": str(order_name)})
-            bg.add_task(poll_and_notify_heygen, video_id, to_email, str(order_name))
-            jobs_created.append({"line_item_id": li.get("id"), "provider": "heygen", "video_id": video_id})
-        else:
-            if not image_url or (not script and not audio_url) or not to_email:
-                continue
-            voice = "ms:it-IT-GiuseppeNeural"
-            if str(voice_sel).lower().startswith("don"): voice = "ms:it-IT-IsabellaNeural"
-            if str(voice_sel).startswith("eleven:"):     voice = voice_sel
-            job = Job(image_url=image_url, script=script, voice=voice, audio_url=audio_url,
-                      to_email=to_email, order_name=str(order_name))
-            talk = did_create_talk(job)
-            talk_id = talk.get("id")
-            if talk_id:
-                _jobs_upsert(talk_id, {"id": talk_id, "provider": "d-id", "status": "submitted",
-                                       "to_email": to_email, "order_name": str(order_name), "raw": talk})
-                bg.add_task(poll_and_notify_did, job, talk_id)
-            jobs_created.append({"line_item_id": li.get("id"), "provider": "d-id", "talk_id": talk_id})
-
-    return {"ok": True, "jobs": jobs_created}
-
-# =========================
 # ADMIN API (Bearer)
 # =========================
 @app.get("/api/admin/jobs")
@@ -494,13 +405,66 @@ def admin_resend_email(job_id: str, _: bool = Depends(require_admin_header)):
     if not j: raise HTTPException(404, "Job not found")
     if not j.get("to_email"): raise HTTPException(400, "Job senza email")
     if not j.get("video_url"): raise HTTPException(400, "Video non pronto")
-    video_url = j["video_url"]
     html = (
         '<p>Ciao! 👋</p><p>Il tuo video è pronto.</p>'
-        f'<p><a href="{video_url}" target="_blank">Scarica</a></p>'
+        f'<p><a href="{j["video_url"]}" target="_blank">Scarica</a></p>'
     )
     send_email(j["to_email"], f"Video pronto — Ordine {j.get('order_name','')}", html)
     return {"ok": True, "resent": True}
+
+# =========================
+# SHOPIFY: CREATE PRODUCT
+# =========================
+def _shop_headers():
+    if not (SHOP_DOMAIN and SHOP_ADMIN_TOKEN):
+        raise HTTPException(500, "SHOP_DOMAIN/SHOP_ADMIN_TOKEN mancanti")
+    return {
+        "X-Shopify-Access-Token": SHOP_ADMIN_TOKEN,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+def shopify_create_product(title: str, body_html: str, price: float, image_url: Optional[str] = None,
+                           published: bool = True, tags: Optional[List[str]] = None) -> Dict[str, Any]:
+    payload = {
+        "product": {
+            "title": title,
+            "body_html": body_html,
+            "tags": ", ".join(tags or ["EccomiVideo"]),
+            "status": "active" if published else "draft",
+            "variants": [{"price": f"{price:.2f}"}]
+        }
+    }
+    if image_url:
+        payload["product"]["images"] = [{"src": image_url}]
+    url = f"https://{SHOP_DOMAIN}/admin/api/{SHOPIFY_API_VER}/products.json"
+    r = requests.post(url, headers=_shop_headers(), json=payload, timeout=60)
+    if r.status_code not in (200, 201):
+        raise HTTPException(r.status_code, f"Shopify create product error: {r.text}")
+    return r.json()
+
+@app.post("/api/admin/publish/{job_id}")
+def admin_publish(job_id: str, price: float = 19.0, published: bool = True,
+                  _: bool = Depends(require_admin_header)):
+    with JOBS_LOCK:
+        j = JOBS.get(job_id)
+    if not j: raise HTTPException(404, "Job not found")
+    if not j.get("video_url"): raise HTTPException(400, "Video non pronto")
+
+    title = f"Video AI — {j.get('provider','')}".strip()
+    desc = []
+    if j.get("order_name"): desc.append(f"<p><b>Ordine:</b> {j['order_name']}</p>")
+    if j.get("to_email"):   desc.append(f"<p><b>Email cliente:</b> {j['to_email']}</p>")
+    desc.append(f'<p><a href="{j["video_url"]}" target="_blank">Scarica il video</a></p>')
+    body_html = "\n".join(desc)
+
+    img = j.get("thumbnail") or None  # puoi valorizzarlo in futuro
+    res = shopify_create_product(title=title, body_html=body_html, price=price, image_url=img, published=published)
+    prod = (res or {}).get("product") or {}
+    handle = prod.get("handle"); pid = prod.get("id")
+    url = f"https://www.eccomionline.com/products/{handle}" if handle else ""
+    _jobs_upsert(job_id, {"shopify_product_id": pid, "shopify_url": url})
+    return {"ok": True, "product_id": pid, "product_url": url}
 
 # =========================
 # DASHBOARD + CREATOR PANEL
@@ -608,7 +572,6 @@ hr{border:none;border-top:1px solid #eee;margin:12px 0}
 </thead><tbody></tbody></table>
 
 <script>
-// ==== Token handling ====
 function askToken(){
   let tk = new URLSearchParams(location.search).get("token");
   if(!tk) tk = sessionStorage.getItem("eccomi_admin_token") || "";
@@ -617,10 +580,9 @@ function askToken(){
   sessionStorage.setItem("eccomi_admin_token", tk);
   return tk;
 }
-const token = askToken();
-if(!token) throw new Error("No token");
+const token = askToken(); if(!token) throw new Error("No token");
 
-// ==== UI toggle per i campi ====
+// toggle campi
 const selType = document.getElementById('type');
 const didBox = document.getElementById('did-fields');
 const hgTextBox = document.getElementById('hg-text-fields');
@@ -633,7 +595,6 @@ function updateFields(){
 }
 selType.onchange = updateFields; updateFields();
 
-// ==== Loader tabella ====
 async function load(){
   const r = await fetch('/api/admin/jobs', { headers:{ Authorization:`Bearer ${token}` }});
   if(!r.ok){ document.body.innerHTML = "<p>Unauthorized</p>"; return; }
@@ -643,6 +604,8 @@ async function load(){
   for(const j of (data.jobs||[])){
     const tr = document.createElement("tr");
     const v = j.video_url ? `<a href="${j.video_url}" target="_blank">apri</a>` : "";
+    const pub = j.video_url ? `<button class="btn" onclick="publish('${j.id}')">Pubblica</button>` : `<button class="btn" disabled>Pubblica</button>`;
+    const resend = j.video_url ? `<button class="btn" onclick="resend('${j.id}')">Re-invia email</button>` : `<button class="btn" disabled>Re-invia email</button>`;
     tr.innerHTML = `
       <td><code>${j.id||""}</code><br><small>${j.updated_at||""}</small></td>
       <td>${j.provider||""}</td>
@@ -650,7 +613,7 @@ async function load(){
       <td>${v}</td>
       <td>${j.to_email||""}</td>
       <td>${j.order_name||""}</td>
-      <td><button class="btn" ${j.video_url?"":"disabled"} onclick="resend('${j.id}')">Re-invia email</button></td>
+      <td>${pub} ${resend} ${j.shopify_url?('<a class="btn" target="_blank" href="'+j.shopify_url+'">Prodotto</a>'):''}</td>
     `;
     tbody.appendChild(tr);
   }
@@ -658,16 +621,31 @@ async function load(){
 document.getElementById("refresh").onclick = (e)=>{ e.preventDefault(); load(); };
 setInterval(load, 6000); load();
 
-// ==== Azione: re-invio email ====
 async function resend(id){
   const r = await fetch(`/api/admin/resend-email/${encodeURIComponent(id)}`, {
     method:"POST", headers:{ Authorization:`Bearer ${token}` }
   });
   alert(r.ok ? "Email inviata" : "Errore reinvio");
 }
-window.resend = resend;
 
-// ==== Creator Panel: submit ====
+async function publish(id){
+  const prezzo = prompt("Prezzo prodotto (€)", "19");
+  if(!prezzo) return;
+  const r = await fetch(`/api/admin/publish/${encodeURIComponent(id)}?price=${encodeURIComponent(prezzo)}`, {
+    method:"POST", headers:{ Authorization:`Bearer ${token}` }
+  });
+  const data = await r.json().catch(()=> ({}));
+  if(r.ok){
+    alert("Pubblicato ✅");
+    load();
+  }else{
+    alert("Errore pubblicazione: " + (data.detail || r.status));
+  }
+}
+
+window.resend = resend;
+window.publish = publish;
+
 function setMsg(text, ok=true){
   const el = document.getElementById('msg');
   el.textContent = text;
@@ -687,13 +665,13 @@ document.getElementById('create').onclick = async ()=>{
     const audio_url = document.getElementById('audio_url').value.trim();
     if(!image_url){ setMsg("Image URL obbligatorio", false); return; }
     if(!script && !audio_url){ setMsg("Scrivi uno script o passa un audio_url", false); return; }
-    url = "/api/manual/photo";
+    url = "/api/jobs/photo";
     body = { image_url, voice, script: script||undefined, audio_url: audio_url||undefined,
              to_email: to_email||undefined, order_name };
   } else if(t === 'hg-text'){
     const script = document.getElementById('hg_script').value.trim();
     if(!script){ setMsg("Script obbligatorio", false); return; }
-    url = "/api/manual/avatar-text";
+    url = "/api/heygen/submit";
     body = { script,
              avatar_id: (document.getElementById('hg_avatar').value||undefined),
              voice_id: (document.getElementById('hg_voice').value||undefined),
@@ -701,7 +679,7 @@ document.getElementById('create').onclick = async ()=>{
   } else { // hg-audio
     const audio_url = document.getElementById('hg_audio_url').value.trim();
     if(!audio_url){ setMsg("Audio URL obbligatorio", false); return; }
-    url = "/api/manual/avatar-audio";
+    url = "/api/heygen/submit-audio";
     body = { audio_url,
              avatar_id: (document.getElementById('hg_avatar2').value||undefined),
              to_email: to_email||undefined, order_name };
@@ -709,7 +687,7 @@ document.getElementById('create').onclick = async ()=>{
 
   const r = await fetch(url, {
     method:"POST",
-    headers:{ "Content-Type":"application/json", Authorization:`Bearer ${token}` },
+    headers:{ "Content-Type":"application/json" },
     body: JSON.stringify(body)
   });
   const data = await r.json().catch(()=> ({}));
