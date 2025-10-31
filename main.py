@@ -134,6 +134,36 @@ def send_email(to_email: str, subject: str, html: str):
         print("❌ ERRORE invio email:", e)
 
 # =========================
+# TEST EMAIL (Resend)
+# =========================
+@app.get("/api/test-email")
+def test_email(to: str = "ciaoeccomionline@gmail.com"):
+    """
+    Invia un'email di test tramite Resend.
+    Puoi cambiare il destinatario con ?to=email@dominio.it
+    """
+    if not RESEND_KEY:
+        raise HTTPException(500, "RESEND_API_KEY mancante")
+    try:
+        subject = "✅ Test Eccomi Video — Resend"
+        html = """
+        <h2>Eccomi Video — Test Email OK</h2>
+        <p>Questa è una mail di test inviata dal backend <b>Eccomi Video Automation</b>.</p>
+        <p>Se la ricevi correttamente, Resend è attivo e configurato 👍</p>
+        <hr>
+        <small>Mittente: Eccomi Video &lt;info@eccomionline.com&gt;</small>
+        """
+        resend.Emails.send({
+            "from": FROM_EMAIL,
+            "to": to,
+            "subject": subject,
+            "html": html
+        })
+        return {"ok": True, "sent_to": to, "from": FROM_EMAIL}
+    except Exception as e:
+        raise HTTPException(500, f"Errore invio email: {e}")
+
+# =========================
 # D-ID (Photo → Talking Video)
 # =========================
 def did_headers():
