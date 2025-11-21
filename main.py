@@ -1,13 +1,15 @@
-import os, hmac, hashlib, base64, time, json, requests
+import os, hmac, hashlib, base64, time, json, requests, uuid
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 from threading import Lock
+from pathlib import Path
 
-from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Query, Depends, Header
+from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Query, Depends, Header, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, HTMLResponse
+from fastapi.responses import Response, HTMLResponse, JSONResponse
 from pydantic import BaseModel
 import resend
+
 
 # =========================
 # ENV & GLOBALS
@@ -30,6 +32,10 @@ SHOP_ADMIN_TOKEN = os.getenv("SHOP_ADMIN_TOKEN", "")
 SHOPIFY_API_VER = os.getenv("SHOPIFY_API_VER", "2025-10")
 
 DATA_FILE = os.getenv("DATA_FILE", "/mnt/data/jobs.json")
+
+EVS_STORAGE_DIR = os.getenv("EVS_STORAGE_DIR", "/mnt/data/evs_orders")
+EVS_STORAGE = Path(EVS_STORAGE_DIR)
+EVS_STORAGE.mkdir(parents=True, exist_ok=True)
 
 if RESEND_KEY:
     resend.api_key = RESEND_KEY
