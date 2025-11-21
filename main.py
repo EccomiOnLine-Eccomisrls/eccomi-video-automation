@@ -421,6 +421,73 @@ def admin_resend_email(job_id: str, _: bool = Depends(require_admin_header)):
 # =========================
 # SHOPIFY: CREATE PRODUCT
 # =========================
+# =========================
+# EVS — RACCOLTA ORDINI DA SHOPIFY
+# =========================
+@app.post("/evs/order", tags=["evs"])
+async def evs_create_order(
+    email: str = Form(...),
+    consent: bool = Form(...),
+    script_text: str = Form(""),
+    reference_link: str = Form(""),
+    photo: UploadFile = File(...),
+    audio: Optional[UploadFile] = File(None),
+):
+    """
+    Riceve i dati dalla modale EVS su Shopify:
+    - email cliente
+    - consenso
+    - testo/script opzionale
+    - link di riferimento opzionale
+    - foto obbligatoria
+    - audio opzionale
+    Ritorna un evs_token da salvare nel carrello.
+    """
+
+    if not consent:
+        raise HTTPException(status_code=400, detail="Consenso obbligatorio")
+
+    order_id = str(uuid.uuid4())
+
+    # Crea cartella dedicata per questo ordine
+    order_dir = EVS_STORAGE / order_id
+    order_dir.mkdir(parents=True, exist_ok=True)
+
+    # Salva foto
+    photo_ext = os.path.splitext(photo.filename or "")[1] or ".png"
+    photo_path = order_dir / f"photo{photo_ext}"
+    with photo_path.open("wb") as f:
+        f.write(await photo.read())
+
+    # Salva audio (se presente)
+    audio_path = None
+    if audio is not None:
+        audio_ext = os.path.splitext(audio.filename or "")[1] or ".wav"
+        audio_path = order_dir / f"audio{audio_ext}"
+        with audio_path.open("wb") as f:
+            f.write(await audio.read())
+
+    # Salva metadata ordine
+    meta = {
+        "order_id": order_id,
+        "email": email,
+        "consent": True,
+        "script_text": script_text,
+        "reference_link": reference_link,
+        "photo_path": str(photo_path),
+        "audio_path": str(audio_path) if audio_path else None,
+        "status": "PENDING_PAYMENT",
+        "created_at": _now_iso(),
+    }
+    try:
+        with (order_dir / "meta.json").open("w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print("❌ EVS meta save error:", e)
+
+    # Risposta al frontend
+    return JSONResponse({"ok": True, "evs_token": order_id})
+
 def _shop_headers():
     if not (SHOP_DOMAIN and SHOP_ADMIN_TOKEN):
         raise HTTPException(500, "SHOP_DOMAIN/SHOP_ADMIN_TOKEN mancanti")
