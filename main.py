@@ -602,13 +602,14 @@ td,th{border:1px solid #e5e7eb;padding:8px;font-size:14px;vertical-align:top}
 tr:hover{background:#fafafa}
 small{color:#666}
 hr{border:none;border-top:1px solid #eee;margin:12px 0}
+code{font-size:12px}
 </style>
 
 <h1>Eccomi Video — Dashboard</h1>
 <p><small>Auto-refresh 6s · <a href="#" id="refresh">Aggiorna ora</a></small></p>
 
 <section id="creator">
-  <h3>Crea nuovo lavoro</h3>
+  <h3>Crea nuovo lavoro (D-ID / Heygen)</h3>
   <div class="grid3">
     <div>
       <label>Tipo</label>
@@ -678,9 +679,29 @@ hr{border:none;border-top:1px solid #eee;margin:12px 0}
   <span id="msg" style="margin-left:8px"></span>
 </section>
 
+<h3>Lavori video (D-ID / Heygen)</h3>
 <table id="jobs"><thead>
 <tr><th>ID</th><th>Provider</th><th>Status</th><th>Video</th><th>Email</th><th>Ordine</th><th>Azioni</th></tr>
 </thead><tbody></tbody></table>
+
+<section id="evs-section">
+  <h3>Ordini EVS da Shopify</h3>
+  <p><small>Ultimi ordini salvati in <code>data/evs_orders</code> (stato PENDING/PAID ecc.).</small></p>
+  <table id="evs-orders-table">
+    <thead>
+      <tr>
+        <th>EVS Token</th>
+        <th>Email</th>
+        <th>Status</th>
+        <th>Creato il</th>
+        <th>Foto</th>
+        <th>Audio</th>
+        <th>Link di riferimento</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</section>
 
 <script>
 function askToken(){
@@ -706,7 +727,7 @@ function updateFields(){
 }
 selType.onchange = updateFields; updateFields();
 
-async function load(){
+async function loadJobs(){
   const r = await fetch('/api/admin/jobs', { headers:{ Authorization:`Bearer ${token}` }});
   if(!r.ok){ document.body.innerHTML = "<p>Unauthorized</p>"; return; }
   const data = await r.json();
@@ -729,8 +750,32 @@ async function load(){
     tbody.appendChild(tr);
   }
 }
-document.getElementById("refresh").onclick = (e)=>{ e.preventDefault(); load(); };
-setInterval(load, 6000); load();
+
+async function loadEvsOrders(){
+  const r = await fetch('/api/admin/evs-orders', { headers:{ Authorization:`Bearer ${token}` }});
+  if(!r.ok) return;
+  const data = await r.json();
+  const tbody = document.querySelector("#evs-orders-table tbody");
+  tbody.innerHTML = "";
+  for(const o of (data.orders||[])){
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><code>${o.order_id||""}</code></td>
+      <td>${o.email||""}</td>
+      <td><span class="badge">${o.status||""}</span></td>
+      <td><small>${o.created_at||""}</small></td>
+      <td><small>${o.photo_path ? o.photo_path.split("/").slice(-1)[0] : ""}</small></td>
+      <td><small>${o.audio_path ? o.audio_path.split("/").slice(-1)[0] : ""}</small></td>
+      <td><small>${o.reference_link||""}</small></td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
+document.getElementById("refresh").onclick = (e)=>{ e.preventDefault(); loadJobs(); loadEvsOrders(); };
+setInterval(function(){ loadJobs(); loadEvsOrders(); }, 6000);
+loadJobs();
+loadEvsOrders();
 
 async function resend(id){
   const r = await fetch(`/api/admin/resend-email/${encodeURIComponent(id)}`, {
@@ -748,7 +793,7 @@ async function publish(id){
   const data = await r.json().catch(()=> ({}));
   if(r.ok){
     alert("Pubblicato ✅");
-    load();
+    loadJobs();
   }else{
     alert("Errore pubblicazione: " + (data.detail || r.status));
   }
@@ -807,7 +852,7 @@ document.getElementById('create').onclick = async ()=>{
     return;
   }
   setMsg("Creato! Aggiorno tabella…", true);
-  load();
+  loadJobs();
 };
 </script>
 </html>
