@@ -540,6 +540,42 @@ def admin_publish(job_id: str, price: float = 19.0, published: bool = True,
     url = f"https://www.eccomionline.com/products/{handle}" if handle else ""
     _jobs_upsert(job_id, {"shopify_product_id": pid, "shopify_url": url})
     return {"ok": True, "product_id": pid, "product_url": url}
+# ---- EVS: lettura ordini salvati su disco ----
+from typing import List  # in alto ce l'hai già, quindi ok se è duplicato
+
+def list_evs_orders(limit: int = 100) -> List[Dict[str, Any]]:
+    orders: List[Dict[str, Any]] = []
+    if not EVS_STORAGE.exists():
+        return orders
+
+    # ordina per data di modifica (più recente in alto)
+    for d in sorted(EVS_STORAGE.glob("*"), key=lambda p: p.stat().st_mtime, reverse=True):
+        meta_path = d / "meta.json"
+        if not meta_path.exists():
+            continue
+        try:
+            with meta_path.open("r", encoding="utf-8") as f:
+                m = json.load(f)
+        except Exception as e:
+            print("⚠️ EVS meta read error:", e, meta_path)
+            continue
+
+        # nel dubbio metto l'order_id = nome cartella
+        m.setdefault("order_id", d.name)
+        orders.append(m)
+        if len(orders) >= limit:
+            break
+    return orders
+
+
+@app.get("/api/admin/evs-orders")
+def admin_evs_orders(_: bool = Depends(require_admin_header)):
+    """
+    Ritorna la lista degli ordini EVS salvati su data/evs_orders.
+    Proteggo con lo stesso ADMIN_TOKEN della dashboard.
+    """
+    return {"ok": True, "orders": list_evs_orders()}
+
 
 # =========================
 # DASHBOARD + CREATOR PANEL
