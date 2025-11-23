@@ -399,66 +399,6 @@ def poll_and_notify_heygen(video_id: str, to_email: Optional[str], order_name: O
         send_email(to_email, f"Stiamo completando il tuo Video Avatar — Ordine {order_name or ''}",
                    "<p>La generazione richiede più tempo del previsto. Ti avviseremo appena pronto.</p>")
 
-def evs_launch_heygen(order_id: str,
-                      order_name: Optional[str],
-                      email: Optional[str],
-                      bg: BackgroundTasks):
-    """
-    Prende un ordine EVS salvato su disco, usa l'audio (se c'è) o lo script
-    e crea un video Heygen. Poi parte il polling + email al cliente.
-    """
-    order_dir = EVS_STORAGE / order_id
-    meta_path = order_dir / "meta.json"
-    if not meta_path.exists():
-        print("[EVS] meta non trovata per", order_id)
-        return
-
-    with meta_path.open("r", encoding="utf-8") as f:
-        meta = json.load(f)
-
-    script = (meta.get("script_text") or "").strip() or \
-             "Ciao! Il tuo video AI è in lavorazione. Ti avviseremo appena è pronto. 😊"
-
-    audio_path = meta.get("audio_path")
-    video_id = None
-
-    # Se abbiamo un audio caricato, lo usiamo come sorgente Heygen
-    if audio_path and PUBLIC_BASE_URL:
-        audio_url = f"{PUBLIC_BASE_URL}/evs/file/{order_id}/audio"
-        print("[EVS] Lancio Heygen con audio_url:", audio_url)
-        try:
-            video_id = heygen_submit_audio(audio_url, avatar_id=None)
-        except HTTPException as e:
-            print("[EVS] errore Heygen audio, provo con testo:", e)
-
-    # Altrimenti (o se audio fallisce) usiamo solo testo
-    if not video_id:
-        print("[EVS] Lancio Heygen solo testo")
-        video_id = heygen_submit_text(script, avatar_id=None, voice_id=None)
-
-    order_name_final = order_name or meta.get("shopify_order_name") or ""
-    email_final = email or meta.get("email") or None
-
-    _jobs_upsert(video_id, {
-        "id": video_id,
-        "provider": "heygen",
-        "status": "submitted",
-        "to_email": email_final,
-        "order_name": order_name_final,
-        "evs_token": order_id,
-    })
-
-    # aggiorno lo stato dell'ordine EVS
-    evs_update_meta(order_id, {
-        "status": "PROCESSING",
-        "shopify_order_name": order_name_final,
-        "email": email_final,
-        "heygen_video_id": video_id,
-    })
-
-    if email_final:
-        bg.add_task(poll_and_notify_heygen, video_id, email_final, order_name_final)
-
 
 # =========================
 # META & DIAG
@@ -739,7 +679,10 @@ def evs_update_meta(order_id: str, changes: Dict[str, Any]) -> Dict[str, Any]:
     return meta
 
 
-def evs_launch_heygen(order_id: str, order_name: Optional[str], email: Optional[str], bg: BackgroundTasks):
+def evs_launch_heygen(order_id: str,
+                      order_name: Optional[str],
+                      email: Optional[str],
+                      bg: BackgroundTasks):
     """
     Prende un ordine EVS salvato su disco, usa l'audio (se c'è) o lo script
     e crea un video Heygen. Poi parte il polling + email al cliente.
@@ -763,9 +706,12 @@ def evs_launch_heygen(order_id: str, order_name: Optional[str], email: Optional[
     if audio_path and PUBLIC_BASE_URL:
         audio_url = f"{PUBLIC_BASE_URL}/evs/file/{order_id}/audio"
         print("[EVS] Lancio Heygen con audio_url:", audio_url)
-        video_id = heygen_submit_audio(audio_url, avatar_id=None)
+        try:
+            video_id = heygen_submit_audio(audio_url, avatar_id=None)
+        except HTTPException as e:
+            print("[EVS] errore Heygen audio, provo con testo:", e)
 
-    # Altrimenti usiamo solo testo
+    # Altrimenti (o se audio fallisce) usiamo solo testo
     if not video_id:
         print("[EVS] Lancio Heygen solo testo")
         video_id = heygen_submit_text(script, avatar_id=None, voice_id=None)
