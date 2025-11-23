@@ -272,17 +272,39 @@ def heygen_submit_text(script: str, avatar_id: Optional[str] = None, voice_id: O
     return vid
 
 def heygen_submit_audio(audio_url: str, avatar_id: Optional[str] = None) -> str:
+    """
+    Submit audio file (URL) to Heygen v2.
+
+    La nuova API v2 richiede SEMPRE il campo 'voice' dentro video_inputs.
+    Per gli audio esterni usiamo:
+      voice = { "type": "audio", "audio_url": audio_url }
+    """
     aid = _ensure_avatar(avatar_id)
+
     payload = {
         "video_inputs": [{
             "avatar_id": aid,
-            "audio": {"type": "mp3", "source": "url", "url": audio_url}
+            "voice": {
+                "type": "audio",
+                "audio_url": audio_url,
+            }
         }],
-        "test": False, "caption": False, "aspect_ratio": "9:16", "resolution": "720p"
+        "test": False,
+        "caption": False,
+        "aspect_ratio": "9:16",
+        "resolution": "720p",
     }
-    r = requests.post("https://api.heygen.com/v2/video/generate", headers=_heygen_headers(), json=payload, timeout=120)
+
+    r = requests.post(
+        "https://api.heygen.com/v2/video/generate",
+        headers=_heygen_headers(),
+        json=payload,
+        timeout=120,
+    )
+
     if r.status_code != 200:
         raise HTTPException(r.status_code, f"HeyGen v2 submit-audio error: {r.text}")
+
     data = r.json().get("data", {})
     vid = data.get("video_id") or data.get("id")
     if not vid:
