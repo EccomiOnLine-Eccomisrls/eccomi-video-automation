@@ -265,17 +265,24 @@ def _ensure_avatar(aid: Optional[str]) -> str:
 def heygen_submit_text(script: str,
                        avatar_id: Optional[str] = None,
                        voice_id: Optional[str] = None) -> str:
+    """
+    Crea un video da TESTO.
+    Se non passo voice_id, NON lo metto nel payload e Heygen usa il default.
+    """
     aid = _ensure_avatar(avatar_id)
-    vid_voice_id = (voice_id or HEYGEN_VOICE_ID or "").strip() or None
 
     video_input: Dict[str, Any] = {
         "avatar_id": aid,
         "voice": {
             "type": "text",
             "input_text": script,
+            # niente voice_id qui, lo aggiungiamo solo se non è vuoto
         },
     }
+
+    vid_voice_id = (voice_id or HEYGEN_VOICE_ID or "").strip()
     if vid_voice_id:
+        # solo se c’è qualcosa di vero, aggiungiamo il campo
         video_input["voice"]["voice_id"] = vid_voice_id
 
     payload = {
@@ -310,7 +317,7 @@ def heygen_submit_audio(audio_url: str,
     video_input: Dict[str, Any] = {
         "avatar_id": aid,
         "voice": {
-            "type": "audio",          # <--- importante
+            "type": "audio_url",          # <-- deve essere audio_url
             "audio_src_url": audio_url,
         },
     }
