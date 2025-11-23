@@ -262,29 +262,34 @@ def _ensure_avatar(aid: Optional[str]) -> str:
         raise HTTPException(500, "HEYGEN_AVATAR_ID mancante")
     return aid
 
-
 def heygen_submit_text(script: str,
                        avatar_id: Optional[str] = None,
                        voice_id: Optional[str] = None) -> str:
     """
-    Crea un video da TESTO.
-    voice_id: se None usa HEYGEN_VOICE_ID, se vuoto Heygen usa il default dell'avatar.
+    Crea un video Heygen partendo da TESTO.
+    voice_id:
+      - se passato in input, usa quello
+      - altrimenti usa HEYGEN_VOICE_ID preso dall'env
     """
     aid = _ensure_avatar(avatar_id)
-    vid_voice_id = (voice_id or HEYGEN_VOICE_ID or "").strip() or None
 
-    video_input: Dict[str, Any] = {
-        "avatar_id": aid,
-        "voice": {
-            "type": "text",
-            "input_text": script,
-        },
-    }
-    if vid_voice_id:
-        video_input["voice"]["voice_id"] = vid_voice_id
+    # voice_id obbligatorio per Heygen
+    vid_voice_id = (voice_id or HEYGEN_VOICE_ID or "").strip()
+    if not vid_voice_id:
+        raise HTTPException(
+            500,
+            "HEYGEN_VOICE_ID non configurato e nessun voice_id passato: imposta una voce valida in env."
+        )
 
     payload = {
-        "video_inputs": [video_input],
+        "video_inputs": [{
+            "avatar_id": aid,
+            "voice": {
+                "type": "text",
+                "input_text": script,
+                "voice_id": vid_voice_id,
+            }
+        }],
         "test": False,
         "caption": False,
         "aspect_ratio": "9:16",
@@ -308,15 +313,15 @@ def heygen_submit_text(script: str,
 def heygen_submit_audio(audio_url: str,
                         avatar_id: Optional[str] = None) -> str:
     """
-    Crea un video da AUDIO esistente (url pubblico).
+    Crea un video Heygen usando un AUDIO esistente (URL pubblico).
     """
     aid = _ensure_avatar(avatar_id)
 
     video_input: Dict[str, Any] = {
         "avatar_id": aid,
         "voice": {
-            "type": "audio",          # <-- FIX
-            "audio_src_url": audio_url,
+            "type": "audio",      # <- tipo giusto
+            "audio_url": audio_url,  # <- chiave giusta (non audio_src_url)
         },
     }
 
@@ -341,7 +346,6 @@ def heygen_submit_audio(audio_url: str,
     if not vid:
         raise HTTPException(502, f"HeyGen v2: risposta senza video_id: {r.text}")
     return vid
-
 
 def heygen_status(video_id: str) -> Dict[str, Any]:
     r = requests.get(
