@@ -371,14 +371,23 @@ def health(): return {"ok": True, "service": "EccomiVideoAutomation", "version":
 @app.get("/api/diag/env")
 def diag_env():
     return {
-        "RESEND_API_KEY": bool(RESEND_KEY), "FROM_EMAIL": FROM_EMAIL,
+        "RESEND_API_KEY": bool(RESEND_KEY),
+        "FROM_EMAIL": FROM_EMAIL,
         "D_ID_API_KEY": bool(DID_KEY),
-        "HEYGEN_API_KEY": bool(HEYGEN_KEY), "HEYGEN_AVATAR_ID": bool(HEYGEN_AVATAR),
+        "HEYGEN_API_KEY": bool(HEYGEN_KEY),
+        "HEYGEN_AVATAR_ID": bool(HEYGEN_AVATAR),
+        "HEYGEN_VOICE_ID": HEYGEN_VOICE_ID,
         "ELEVENLABS_API_KEY": bool(ELEVEN_KEY),
         "ADMIN_TOKEN": bool(ADMIN_TOKEN),
-        "SHOP_DOMAIN": SHOP_DOMAIN, "SHOP_ADMIN_TOKEN": bool(SHOP_ADMIN_TOKEN),
+        "SHOP_DOMAIN": SHOP_DOMAIN,
+        "SHOP_ADMIN_TOKEN": bool(SHOP_ADMIN_TOKEN),
+        "SHOPIFY_WEBHOOK_SECRET": bool(SHOPIFY_WEBHOOK_SECRET),
+        "VERIFY_SHOPIFY_HMAC": VERIFY_SHOPIFY_HMAC,
+        "PUBLIC_BASE_URL": PUBLIC_BASE_URL,
         "DATA_FILE": DATA_FILE,
+        "EVS_STORAGE_DIR": EVS_STORAGE_DIR,
     }
+
 
 # =========================
 # PIPELINE D-ID: API
