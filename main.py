@@ -305,7 +305,6 @@ def heygen_submit_text(script: str,
         raise HTTPException(502, f"HeyGen v2: risposta senza video_id: {r.text}")
     return vid
 
-
 def heygen_submit_audio(audio_url: str,
                         avatar_id: Optional[str] = None) -> str:
     """
@@ -315,8 +314,8 @@ def heygen_submit_audio(audio_url: str,
 
     video_input: Dict[str, Any] = {
         "avatar_id": aid,
-        "voice": {               # <-- voce di tipo "audio_url"
-            "type": "audio_url",
+        "voice": {
+            "type": "audio",          # <-- FIX
             "audio_src_url": audio_url,
         },
     }
