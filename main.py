@@ -9,6 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, HTMLResponse, JSONResponse
 from pydantic import BaseModel
 import resend
+import mimetypes
+
 
 
 # =========================
@@ -575,6 +577,186 @@ def admin_evs_orders(_: bool = Depends(require_admin_header)):
     Proteggo con lo stesso ADMIN_TOKEN della dashboard.
     """
     return {"ok": True, "orders": list_evs_orders()}
+
+def evs_update_meta(order_id: str, changes: Dict[str, Any]) -> Dict[str, Any]:
+    order_dir = EVS_STORAGE / order_id
+    meta_path = order_dir / "meta.json"
+    if not meta_path.exists():
+        raise HTTPException(404, "Ordine EVS non trovato")
+
+    with meta_path.open("r", encoding="utf-8") as f:
+        meta = json.load(f)
+
+    meta.update(changes)
+    meta.setdefault("order_id", order_id)
+    meta["updated_at"] = _now_iso()
+
+    with meta_path.open("w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+
+    return meta
+
+
+def evs_launch_heygen(order_id: str, order_name: Optional[str], email: Optional[str], bg: BackgroundTasks):
+    """
+    Prende un ordine EVS salvato su disco, usa l'audio (se c'è) o lo script
+    e crea un video Heygen. Poi parte il polling + email al cliente.
+    """
+    order_dir = EVS_STORAGE / order_id
+    meta_path = order_dir / "meta.json"
+    if not meta_path.exists():
+        print("[EVS] meta non trovata per", order_id)
+        return
+
+    with meta_path.open("r", encoding="utf-8") as f:
+        meta = json.load(f)
+
+    script = (meta.get("script_text") or "").strip() or \
+             "Ciao! Il tuo video AI è in lavorazione. Ti avviseremo appena è pronto. 😊"
+
+    audio_path = meta.get("audio_path")
+    video_id = None
+
+    # Se abbiamo un audio caricato, lo usiamo come sorgente Heygen
+    if audio_path and PUBLIC_BASE_URL:
+        audio_url = f"{PUBLIC_BASE_URL}/evs/file/{order_id}/audio"
+        print("[EVS] Lancio Heygen con audio_url:", audio_url)
+        video_id = heygen_submit_audio(audio_url, avatar_id=None)
+
+    # Altrimenti usiamo solo testo
+    if not video_id:
+        print("[EVS] Lancio Heygen solo testo")
+        video_id = heygen_submit_text(script, avatar_id=None, voice_id=None)
+
+    order_name_final = order_name or meta.get("shopify_order_name") or ""
+    email_final = email or meta.get("email") or None
+
+    _jobs_upsert(video_id, {
+        "id": video_id,
+        "provider": "heygen",
+        "status": "submitted",
+        "to_email": email_final,
+        "order_name": order_name_final,
+        "evs_token": order_id,
+    })
+
+    # aggiorno lo stato dell'ordine EVS
+    evs_update_meta(order_id, {
+        "status": "PROCESSING",
+        "shopify_order_name": order_name_final,
+        "email": email_final,
+        "heygen_video_id": video_id,
+    })
+
+    if email_final:
+        bg.add_task(poll_and_notify_heygen, video_id, email_final, order_name_final)
+
+def _verify_shopify_webhook(req: Request, raw_body: bytes):
+    if not VERIFY_SHOPIFY_HMAC:
+        return
+    if not SHOPIFY_WEBHOOK_SECRET:
+        raise HTTPException(500, "SHOPIFY_WEBHOOK_SECRET non configurato")
+
+    received = req.headers.get("X-Shopify-Hmac-Sha256") or ""
+    digest = hmac.new(
+        SHOPIFY_WEBHOOK_SECRET.encode("utf-8"),
+        raw_body,
+        hashlib.sha256
+    ).digest()
+    expected = base64.b64encode(digest).decode("utf-8")
+
+    if not hmac.compare_digest(received, expected):
+        print("[EVS] Webhook HMAC non valido")
+        raise HTTPException(401, "Webhook HMAC non valido")
+
+
+@app.post("/shopify/webhook", tags=["shopify"])
+async def shopify_webhook(request: Request, bg: BackgroundTasks):
+    """
+    Riceve l'aggiornamento ordine da Shopify.
+    Se l'ordine è PAID e contiene un prodotto con EVS Token,
+    lancia automaticamente Heygen per quell'ordine EVS.
+    """
+    raw = await request.body()
+    _verify_shopify_webhook(request, raw)
+
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except Exception:
+        raise HTTPException(400, "Payload JSON non valido")
+
+    financial_status = payload.get("financial_status")
+    if financial_status not in ("paid", "partially_paid"):
+        # ignoriamo bozze, aperti, pending, cancellati ecc.
+        return {"ok": True, "ignored": "not_paid", "status": financial_status}
+
+    order_name = payload.get("name") or ""
+    email = payload.get("email") or ((payload.get("customer") or {}).get("email"))
+
+    tokens: List[str] = []
+    for line in payload.get("line_items", []):
+        for p in (line.get("properties") or []):
+            name = (p.get("name") or "").strip()
+            if name == "EVS Token":
+                tok = (p.get("value") or "").strip()
+                if tok:
+                    tokens.append(tok)
+
+    if not tokens:
+        return {"ok": True, "ignored": "no_evs_tokens"}
+
+    print("[EVS] Webhook PAID per ordine", order_name, "token EVS:", tokens)
+
+    for tok in tokens:
+        try:
+            # segno lo stato come PAID e lancio Heygen
+            evs_update_meta(tok, {"status": "PAID"})
+            evs_launch_heygen(tok, order_name, email, bg)
+        except Exception as e:
+            print("[EVS] errore lancio Heygen per", tok, e)
+
+    return {"ok": True, "processed_tokens": tokens}
+
+
+# =========================
+# EVS: FILE PUBBLICI (per Heygen)
+# =========================
+@app.get("/evs/file/{order_id}/{kind}", tags=["evs"])
+def evs_file(order_id: str, kind: str):
+    """
+    Rende pubblica la foto o l'audio di un ordine EVS.
+    kind = "photo" | "audio"
+    """
+    order_dir = EVS_STORAGE / order_id
+    meta_path = order_dir / "meta.json"
+    if not meta_path.exists():
+        raise HTTPException(404, "Ordine EVS non trovato")
+
+    try:
+        with meta_path.open("r", encoding="utf-8") as f:
+            meta = json.load(f)
+    except Exception as e:
+        print("⚠️ EVS meta read error in /evs/file:", e)
+        raise HTTPException(500, "Errore lettura meta EVS")
+
+    if kind == "photo":
+        path_str = meta.get("photo_path")
+    elif kind == "audio":
+        path_str = meta.get("audio_path")
+    else:
+        raise HTTPException(400, "kind deve essere 'photo' o 'audio'")
+
+    if not path_str or not os.path.exists(path_str):
+        raise HTTPException(404, "File non trovato")
+
+    ctype, _ = mimetypes.guess_type(path_str)
+    if not ctype:
+        ctype = "application/octet-stream"
+
+    with open(path_str, "rb") as f:
+        data = f.read()
+
+    return Response(content=data, media_type=ctype)
 
 
 # =========================
