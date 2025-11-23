@@ -245,50 +245,46 @@ def poll_and_notify_did(job: Job, talk_id: str, max_wait_sec: int = 600, every_s
 def _heygen_headers():
     if not HEYGEN_KEY:
         raise HTTPException(500, "HEYGEN_API_KEY mancante")
-    return {"X-Api-Key": HEYGEN_KEY, "Content-Type": "application/json"}
+    return {
+        "X-Api-Key": HEYGEN_KEY,
+        "Content-Type": "application/json",
+    }
+
 
 def _ensure_avatar(aid: Optional[str]) -> str:
-    aid = aid or HEYGEN_AVATAR
+    """
+    Ritorna sempre un avatar valido:
+    - se passo avatar_id uso quello
+    - altrimenti prendo HEYGEN_AVATAR
+    """
+    aid = (aid or "").strip() or (HEYGEN_AVATAR or "").strip()
     if not aid:
         raise HTTPException(500, "HEYGEN_AVATAR_ID mancante")
     return aid
 
-def heygen_submit_text(script: str, avatar_id: Optional[str] = None, voice_id: Optional[str] = None) -> str:
+
+def heygen_submit_text(script: str,
+                       avatar_id: Optional[str] = None,
+                       voice_id: Optional[str] = None) -> str:
+    """
+    Crea un video da TESTO.
+    voice_id: se None usa HEYGEN_VOICE_ID, se vuoto Heygen usa il default dell'avatar.
+    """
     aid = _ensure_avatar(avatar_id)
-    payload = {
-        "video_inputs": [{
-            "avatar_id": aid,
-            "voice": {"type": "text", "input_text": script, "voice_id": (voice_id or HEYGEN_VOICE_ID)}
-        }],
-        "test": False, "caption": False, "aspect_ratio": "9:16", "resolution": "720p"
+    vid_voice_id = (voice_id or HEYGEN_VOICE_ID or "").strip() or None
+
+    video_input: Dict[str, Any] = {
+        "avatar_id": aid,
+        "voice": {
+            "type": "text",
+            "input_text": script,
+        },
     }
-    r = requests.post("https://api.heygen.com/v2/video/generate", headers=_heygen_headers(), json=payload, timeout=120)
-    if r.status_code != 200:
-        raise HTTPException(r.status_code, f"HeyGen v2 submit error: {r.text}")
-    data = r.json().get("data", {})
-    vid = data.get("video_id") or data.get("id")
-    if not vid:
-        raise HTTPException(502, f"HeyGen v2: risposta senza video_id: {r.text}")
-    return vid
-
-def heygen_submit_audio(audio_url: str, avatar_id: Optional[str] = None) -> str:
-    """
-    Submit audio file (URL) to Heygen v2.
-
-    La nuova API v2 richiede SEMPRE il campo 'voice' dentro video_inputs.
-    Per gli audio esterni usiamo:
-      voice = { "type": "audio", "audio_url": audio_url }
-    """
-    aid = _ensure_avatar(avatar_id)
+    if vid_voice_id:
+        video_input["voice"]["voice_id"] = vid_voice_id
 
     payload = {
-        "video_inputs": [{
-            "avatar_id": aid,
-            "voice": {
-                "type": "audio",
-                "audio_url": audio_url,
-            }
-        }],
+        "video_inputs": [video_input],
         "test": False,
         "caption": False,
         "aspect_ratio": "9:16",
@@ -301,24 +297,73 @@ def heygen_submit_audio(audio_url: str, avatar_id: Optional[str] = None) -> str:
         json=payload,
         timeout=120,
     )
-
     if r.status_code != 200:
-        raise HTTPException(r.status_code, f"HeyGen v2 submit-audio error: {r.text}")
-
-    data = r.json().get("data", {})
+        raise HTTPException(r.status_code, f"HeyGen v2 submit error: {r.text}")
+    data = r.json().get("data", {}) or {}
     vid = data.get("video_id") or data.get("id")
     if not vid:
         raise HTTPException(502, f"HeyGen v2: risposta senza video_id: {r.text}")
     return vid
 
+
+def heygen_submit_audio(audio_url: str,
+                        avatar_id: Optional[str] = None) -> str:
+    """
+    Crea un video da AUDIO esistente (url pubblico).
+    """
+    aid = _ensure_avatar(avatar_id)
+
+    video_input: Dict[str, Any] = {
+        "avatar_id": aid,
+        "voice": {               # <-- voce di tipo "audio_url"
+            "type": "audio_url",
+            "audio_src_url": audio_url,
+        },
+    }
+
+    payload = {
+        "video_inputs": [video_input],
+        "test": False,
+        "caption": False,
+        "aspect_ratio": "9:16",
+        "resolution": "720p",
+    }
+
+    r = requests.post(
+        "https://api.heygen.com/v2/video/generate",
+        headers=_heygen_headers(),
+        json=payload,
+        timeout=120,
+    )
+    if r.status_code != 200:
+        raise HTTPException(r.status_code, f"HeyGen v2 submit-audio error: {r.text}")
+    data = r.json().get("data", {}) or {}
+    vid = data.get("video_id") or data.get("id")
+    if not vid:
+        raise HTTPException(502, f"HeyGen v2: risposta senza video_id: {r.text}")
+    return vid
+
+
 def heygen_status(video_id: str) -> Dict[str, Any]:
-    r = requests.get(f"https://api.heygen.com/v2/video/status?video_id={video_id}", headers=_heygen_headers(), timeout=60)
+    r = requests.get(
+        f"https://api.heygen.com/v2/video/status?video_id={video_id}",
+        headers=_heygen_headers(),
+        timeout=60,
+    )
     if r.status_code == 200:
         return r.json()
-    r2 = requests.get(f"https://api.heygen.com/v1/video.status?video_id={video_id}", headers=_heygen_headers(), timeout=60)
+    # fallback v1 solo per sicurezza
+    r2 = requests.get(
+        f"https://api.heygen.com/v1/video.status?video_id={video_id}",
+        headers=_heygen_headers(),
+        timeout=60,
+    )
     if r2.status_code == 200:
         return r2.json()
-    raise HTTPException(502, f"HeyGen status error: v2={r.status_code} {r.text} | v1={r2.status_code} {r2.text}")
+    raise HTTPException(
+        502,
+        f"HeyGen status error: v2={r.status_code} {r.text} | v1={r2.status_code} {r2.text}",
+    )
 
 def poll_and_notify_heygen(video_id: str, to_email: Optional[str], order_name: Optional[str] = None,
                            every_sec: int = 7, max_wait_sec: int = 1200):
