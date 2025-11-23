@@ -37,6 +37,11 @@ SHOPIFY_API_VER = os.getenv("SHOPIFY_API_VER", "2025-10")
 DATA_FILE = os.getenv("DATA_FILE", "data/jobs.json")
 EVS_STORAGE_DIR = os.getenv("EVS_STORAGE_DIR", "data/evs_orders")
 
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "")
+SHOPIFY_WEBHOOK_SECRET = os.getenv("SHOPIFY_WEBHOOK_SECRET", "")
+VERIFY_SHOPIFY_HMAC = os.getenv("VERIFY_SHOPIFY_HMAC", "false").lower() == "true"
+
+
 EVS_STORAGE = Path(EVS_STORAGE_DIR)
 EVS_STORAGE.mkdir(parents=True, exist_ok=True)
 
