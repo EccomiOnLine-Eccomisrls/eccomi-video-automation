@@ -266,24 +266,26 @@ def heygen_submit_text(script: str,
                        avatar_id: Optional[str] = None,
                        voice_id: Optional[str] = None) -> str:
     """
-    Crea un video da TESTO.
-    Se non passo voice_id, NON lo metto nel payload e Heygen usa il default.
+    Crea un video da TESTO usando HeyGen v2.
+    Forziamo un voice_id valido (it_male_energetic) se non viene passato.
     """
     aid = _ensure_avatar(avatar_id)
+
+    # voice_id definitivo: parametro -> env -> default sicuro
+    vid_voice_id = (voice_id or HEYGEN_VOICE_ID or "").strip()
+    if not vid_voice_id:
+        vid_voice_id = "it_male_energetic"
 
     video_input: Dict[str, Any] = {
         "avatar_id": aid,
         "voice": {
             "type": "text",
-            "input_text": script,
-            # niente voice_id qui, lo aggiungiamo solo se non è vuoto
+            "text": {
+                "input_text": script,
+                "voice_id": vid_voice_id,
+            },
         },
     }
-
-    vid_voice_id = (voice_id or HEYGEN_VOICE_ID or "").strip()
-    if vid_voice_id:
-        # solo se c’è qualcosa di vero, aggiungiamo il campo
-        video_input["voice"]["voice_id"] = vid_voice_id
 
     payload = {
         "video_inputs": [video_input],
@@ -307,18 +309,22 @@ def heygen_submit_text(script: str,
         raise HTTPException(502, f"HeyGen v2: risposta senza video_id: {r.text}")
     return vid
 
+
 def heygen_submit_audio(audio_url: str,
                         avatar_id: Optional[str] = None) -> str:
     """
-    Crea un video da AUDIO esistente (url pubblico).
+    Crea un video da AUDIO esistente (url pubblico) usando HeyGen v2.
+    NB: per ora se fallisce facciamo fallback su TESTO in evs_launch_heygen.
     """
     aid = _ensure_avatar(avatar_id)
 
     video_input: Dict[str, Any] = {
         "avatar_id": aid,
         "voice": {
-            "type": "audio_url",          # <-- deve essere audio_url
-            "audio_src_url": audio_url,
+            "type": "audio",
+            "audio": {              # <-- campo corretto secondo l’errore HeyGen
+                "audio_src_url": audio_url,
+            },
         },
     }
 
