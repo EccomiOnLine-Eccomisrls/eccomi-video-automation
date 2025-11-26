@@ -689,10 +689,7 @@ def evs_launch_heygen(order_id: str,
                       order_name: Optional[str],
                       email: Optional[str],
                       bg: BackgroundTasks):
-    """
-    Prende un ordine EVS salvato su disco, usa SOLO lo script di testo
-    e crea un video Heygen. Poi parte il polling + email al cliente.
-    """
+
     order_dir = EVS_STORAGE / order_id
     meta_path = order_dir / "meta.json"
     if not meta_path.exists():
@@ -702,20 +699,16 @@ def evs_launch_heygen(order_id: str,
     with meta_path.open("r", encoding="utf-8") as f:
         meta = json.load(f)
 
-    # Testo dallo shop; se vuoto, fallback
+    # 1️⃣ SEMPRE e SOLO testo
     script = (meta.get("script_text") or "").strip() or \
-             "Ciao! Il tuo Video AI da Foto Parlante Eccomi Online è in lavorazione."
+             "Ciao! Il tuo Video AI è in lavorazione. Ti avviseremo appena è pronto. 😊"
 
-    # 🔴 PER ORA IGNORIAMO COMPLETAMENTE L'AUDIO
-    # audio_path = meta.get("audio_path")
+    print("[EVS] Lancio Heygen SOLO TESTO")
 
-    print("[EVS] Lancio Heygen SOLO TESTO per ordine", order_id)
-
-    # usa avatar e voice di default presi dalle ENV (se None)
     video_id = heygen_submit_text(
         script=script,
-        avatar_id=None,   # None => usa HEYGEN_AVATAR_ID da env
-        voice_id=None,    # None => usa HEYGEN_VOICE_ID da env (it_male_energetic)
+        avatar_id=None,
+        voice_id=None,   # prende di default ENV o it_male_energetic
     )
 
     order_name_final = order_name or meta.get("shopify_order_name") or ""
@@ -730,7 +723,6 @@ def evs_launch_heygen(order_id: str,
         "evs_token": order_id,
     })
 
-    # aggiorno lo stato dell'ordine EVS
     evs_update_meta(order_id, {
         "status": "PROCESSING",
         "shopify_order_name": order_name_final,
@@ -740,6 +732,7 @@ def evs_launch_heygen(order_id: str,
 
     if email_final:
         bg.add_task(poll_and_notify_heygen, video_id, email_final, order_name_final)
+
 
 def _verify_shopify_webhook(req: Request, raw_body: bytes):
     if not VERIFY_SHOPIFY_HMAC:
