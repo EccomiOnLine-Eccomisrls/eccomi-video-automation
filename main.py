@@ -690,7 +690,7 @@ def evs_launch_heygen(order_id: str,
                       email: Optional[str],
                       bg: BackgroundTasks):
     """
-    Prende un ordine EVS salvato su disco, usa l'audio (se c'è) o lo script
+    Prende un ordine EVS salvato su disco, usa SOLO lo script di testo
     e crea un video Heygen. Poi parte il polling + email al cliente.
     """
     order_dir = EVS_STORAGE / order_id
@@ -702,25 +702,21 @@ def evs_launch_heygen(order_id: str,
     with meta_path.open("r", encoding="utf-8") as f:
         meta = json.load(f)
 
+    # Testo dallo shop; se vuoto, fallback
     script = (meta.get("script_text") or "").strip() or \
-             "Ciao! Il tuo video AI è in lavorazione. Ti avviseremo appena è pronto. 😊"
+             "Ciao! Il tuo Video AI da Foto Parlante Eccomi Online è in lavorazione."
 
-    audio_path = meta.get("audio_path")
-    video_id = None
+    # 🔴 PER ORA IGNORIAMO COMPLETAMENTE L'AUDIO
+    # audio_path = meta.get("audio_path")
 
-    # Se abbiamo un audio caricato, lo usiamo come sorgente Heygen
-    if audio_path and PUBLIC_BASE_URL:
-        audio_url = f"{PUBLIC_BASE_URL}/evs/file/{order_id}/audio"
-        print("[EVS] Lancio Heygen con audio_url:", audio_url)
-        try:
-            video_id = heygen_submit_audio(audio_url, avatar_id=None)
-        except HTTPException as e:
-            print("[EVS] errore Heygen audio, provo con testo:", e)
+    print("[EVS] Lancio Heygen SOLO TESTO per ordine", order_id)
 
-    # Altrimenti (o se audio fallisce) usiamo solo testo
-    if not video_id:
-        print("[EVS] Lancio Heygen solo testo")
-        video_id = heygen_submit_text(script, avatar_id=None, voice_id=None)
+    # usa avatar e voice di default presi dalle ENV (se None)
+    video_id = heygen_submit_text(
+        script=script,
+        avatar_id=None,   # None => usa HEYGEN_AVATAR_ID da env
+        voice_id=None,    # None => usa HEYGEN_VOICE_ID da env (it_male_energetic)
+    )
 
     order_name_final = order_name or meta.get("shopify_order_name") or ""
     email_final = email or meta.get("email") or None
