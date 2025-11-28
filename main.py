@@ -838,22 +838,13 @@ async def shopify_webhook(request: Request, bg: BackgroundTasks):
 
     print("[EVS] Webhook PAID per ordine", order_name, "token EVS:", tokens)
 
-        for tok in tokens:
+    for tok in tokens:
         try:
-            # segno lo stato come PAID (così lo vedi subito in dashboard EVS)
+            # segno lo stato come PAID e lancio Heygen
             evs_update_meta(tok, {"status": "PAID"})
-            # e poi provo a lanciare HeyGen
             evs_launch_heygen(tok, order_name, email, bg)
         except Exception as e:
-            print(f"[EVS] errore lancio Heygen per {tok}: {e}")
-            # se qualcosa esplode qui, lo segno nel meta
-            try:
-                evs_update_meta(tok, {
-                    "status": "ERROR",
-                    "error": f"webhook launch: {e}",
-                })
-            except Exception as e2:
-                print(f"[EVS] errore ulteriore update meta per {tok}: {e2}")
+            print("[EVS] errore lancio Heygen per", tok, e)
 
     return {"ok": True, "processed_tokens": tokens}
 
