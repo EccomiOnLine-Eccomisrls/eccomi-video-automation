@@ -689,31 +689,76 @@ def evs_launch_heygen(order_id: str,
                       order_name: Optional[str],
                       email: Optional[str],
                       bg: BackgroundTasks):
+    """
+    Lancia SEMPRE e SOLO HeyGen a TESTO per un ordine EVS.
 
+    - Legge meta.json dell'ordine
+    - Prende script_text (o un testo di default)
+    - Usa avatar_id e voice_id di default dalle ENV
+    - Registra il job in JOBS
+    - Aggiorna meta EVS
+    - Avvia il poll in background (se c'è email)
+    """
     order_dir = EVS_STORAGE / order_id
     meta_path = order_dir / "meta.json"
     if not meta_path.exists():
-        print("[EVS] meta non trovata per", order_id)
+        print(f"[EVS] meta non trovata per {order_id}")
         return
 
-    with meta_path.open("r", encoding="utf-8") as f:
-        meta = json.load(f)
+    try:
+        with meta_path.open("r", encoding="utf-8") as f:
+            meta = json.load(f)
+    except Exception as e:
+        print(f"[EVS] errore lettura meta per {order_id}: {e}")
+        return
 
-    # 1️⃣ SEMPRE e SOLO testo
-    script = (meta.get("script_text") or "").strip() or \
-             "Ciao! Il tuo Video AI è in lavorazione. Ti avviseremo appena è pronto. 😊"
-
-    print("[EVS] Lancio Heygen SOLO TESTO")
-
-    video_id = heygen_submit_text(
-        script=script,
-        avatar_id=None,
-        voice_id=None,   # prende di default ENV o it_male_energetic
-    )
+    # Script: se vuoto, testo di default
+    script = (meta.get("script_text") or "").strip()
+    if not script:
+        script = (
+            "Ciao! Il tuo Video AI da Foto Parlante di Eccomi Online è in lavorazione. "
+            "Ti avviseremo via email appena sarà pronto. "
+            "Grazie per aver scelto Eccomi Online!"
+        )
 
     order_name_final = order_name or meta.get("shopify_order_name") or ""
     email_final = email or meta.get("email") or None
 
+    print(f"[EVS] Lancio Heygen SOLO TESTO per token {order_id} (ordine {order_name_final})")
+
+    try:
+        # se avatar_id / voice_id sono None, heygen_submit_text userà le ENV
+        video_id = heygen_submit_text(
+            script=script,
+            avatar_id=None,
+            voice_id=None,
+        )
+    except Exception as e:
+        # 👉 qui vediamo l’errore vero nei log e nella dashboard
+        print(f"[EVS] ERRORE heygen_submit_text per {order_id}: {e}")
+
+        # segno errore sul meta EVS
+        try:
+            evs_update_meta(order_id, {
+                "status": "ERROR",
+                "error": f"heygen_submit_text: {e}",
+            })
+        except Exception as e2:
+            print(f"[EVS] errore update meta dopo errore heygen per {order_id}: {e2}")
+
+        # creo comunque un job "errore" visibile in dashboard
+        _jobs_upsert(f"evs-{order_id}", {
+            "id": f"evs-{order_id}",
+            "provider": "heygen",
+            "status": "error",
+            "error": str(e),
+            "to_email": email_final,
+            "order_name": order_name_final,
+            "evs_token": order_id,
+        })
+        return
+
+    # Se arriviamo qui, submit HeyGen è andato bene
     _jobs_upsert(video_id, {
         "id": video_id,
         "provider": "heygen",
@@ -723,16 +768,19 @@ def evs_launch_heygen(order_id: str,
         "evs_token": order_id,
     })
 
-    evs_update_meta(order_id, {
-        "status": "PROCESSING",
-        "shopify_order_name": order_name_final,
-        "email": email_final,
-        "heygen_video_id": video_id,
-    })
+    try:
+        evs_update_meta(order_id, {
+            "status": "PROCESSING",
+            "shopify_order_name": order_name_final,
+            "email": email_final,
+            "heygen_video_id": video_id,
+        })
+    except Exception as e:
+        print(f"[EVS] errore update meta (PROCESSING) per {order_id}: {e}")
 
+    # poll & email solo se ho una mail
     if email_final:
         bg.add_task(poll_and_notify_heygen, video_id, email_final, order_name_final)
-
 
 def _verify_shopify_webhook(req: Request, raw_body: bytes):
     if not VERIFY_SHOPIFY_HMAC:
@@ -790,13 +838,22 @@ async def shopify_webhook(request: Request, bg: BackgroundTasks):
 
     print("[EVS] Webhook PAID per ordine", order_name, "token EVS:", tokens)
 
-    for tok in tokens:
+        for tok in tokens:
         try:
-            # segno lo stato come PAID e lancio Heygen
+            # segno lo stato come PAID (così lo vedi subito in dashboard EVS)
             evs_update_meta(tok, {"status": "PAID"})
+            # e poi provo a lanciare HeyGen
             evs_launch_heygen(tok, order_name, email, bg)
         except Exception as e:
-            print("[EVS] errore lancio Heygen per", tok, e)
+            print(f"[EVS] errore lancio Heygen per {tok}: {e}")
+            # se qualcosa esplode qui, lo segno nel meta
+            try:
+                evs_update_meta(tok, {
+                    "status": "ERROR",
+                    "error": f"webhook launch: {e}",
+                })
+            except Exception as e2:
+                print(f"[EVS] errore ulteriore update meta per {tok}: {e2}")
 
     return {"ok": True, "processed_tokens": tokens}
 
