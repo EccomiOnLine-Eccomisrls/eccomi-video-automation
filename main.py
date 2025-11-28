@@ -11,8 +11,6 @@ from pydantic import BaseModel
 import resend
 import mimetypes
 
-
-
 # =========================
 # ENV & GLOBALS
 # =========================
@@ -29,11 +27,10 @@ ELEVEN_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
 
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
 
-SHOP_DOMAIN = os.getenv("SHOP_DOMAIN", "")  # es. eccomionline.myshopify.com
+SHOP_DOMAIN = os.getenv("SHOP_DOMAIN", "")
 SHOP_ADMIN_TOKEN = os.getenv("SHOP_ADMIN_TOKEN", "")
 SHOPIFY_API_VER = os.getenv("SHOPIFY_API_VER", "2025-10")
 
-# percorsi locali (dentro al progetto, scrivibili su Render)
 DATA_FILE = os.getenv("DATA_FILE", "data/jobs.json")
 EVS_STORAGE_DIR = os.getenv("EVS_STORAGE_DIR", "data/evs_orders")
 
@@ -41,16 +38,14 @@ PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "")
 SHOPIFY_WEBHOOK_SECRET = os.getenv("SHOPIFY_WEBHOOK_SECRET", "")
 VERIFY_SHOPIFY_HMAC = os.getenv("VERIFY_SHOPIFY_HMAC", "false").lower() == "true"
 
-
 EVS_STORAGE = Path(EVS_STORAGE_DIR)
 EVS_STORAGE.mkdir(parents=True, exist_ok=True)
-
 
 if RESEND_KEY:
     resend.api_key = RESEND_KEY
 
 # =========================
-# STORAGE (persistenza leggera)
+# STORAGE
 # =========================
 JOBS: Dict[str, Dict[str, Any]] = {}
 JOBS_LOCK = Lock()
@@ -89,9 +84,8 @@ def _jobs_upsert(job_id: str, data: dict):
 
 def _jobs_list():
     with JOBS_LOCK:
-        return sorted(JOBS.values(), key=lambda x: x.get("updated_at",""), reverse=True)
+        return sorted(JOBS.values(), key=lambda x: x.get("updated_at", ""), reverse=True)
 
-# carica a boot
 JOBS.update(_storage_load())
 
 # =========================
@@ -106,7 +100,7 @@ app.add_middleware(
 )
 
 # =========================
-# AUTH (Bearer)
+# AUTH
 # =========================
 def require_admin_header(authorization: str = Header(None)):
     if not ADMIN_TOKEN:
@@ -124,7 +118,7 @@ def require_admin_header(authorization: str = Header(None)):
 class Job(BaseModel):
     image_url: str
     script: Optional[str] = None
-    voice: Optional[str] = "ms:it-IT-GiuseppeNeural"  # "ms:<VOICE>" | "eleven:<VOICE_ID>"
+    voice: Optional[str] = "ms:it-IT-GiuseppeNeural"
     audio_url: Optional[str] = None
     to_email: Optional[str] = None
     order_name: Optional[str] = None
@@ -142,7 +136,6 @@ class HeygenAudio(BaseModel):
     to_email: Optional[str] = None
     order_name: Optional[str] = None
 
-# Manual orders (senza Shopify)
 class ManualPhotoReq(BaseModel):
     image_url: str
     script: Optional[str] = None
@@ -178,7 +171,7 @@ def send_email(to_email: str, subject: str, html: str):
         print("❌ ERRORE invio email:", e)
 
 # =========================
-# D-ID (Photo → Talking Video)
+# D-ID
 # =========================
 def did_headers():
     if not DID_KEY:
@@ -196,7 +189,11 @@ def make_did_payload(job: Job) -> Dict[str, Any]:
         else:
             voice_id = job.voice.split(":", 1)[1] if ":" in (job.voice or "") else "it-IT-GiuseppeNeural"
             provider = {"type": "microsoft", "voice_id": voice_id}
-        payload["script"] = {"type": "text", "input": job.script or "Ciao! Il tuo video è pronto.", "provider": provider}
+        payload["script"] = {
+            "type": "text",
+            "input": job.script or "Ciao! Il tuo video è pronto.",
+            "provider": provider,
+        }
     return payload
 
 def did_create_talk(job: Job) -> Dict[str, Any]:
@@ -212,8 +209,13 @@ def did_status(talk_id: str) -> Dict[str, Any]:
     return r.json()
 
 def poll_and_notify_did(job: Job, talk_id: str, max_wait_sec: int = 600, every_sec: int = 5):
-    _jobs_upsert(talk_id, {"id": talk_id, "provider": "d-id", "status": "queued",
-                           "to_email": job.to_email, "order_name": job.order_name})
+    _jobs_upsert(talk_id, {
+        "id": talk_id,
+        "provider": "d-id",
+        "status": "queued",
+        "to_email": job.to_email,
+        "order_name": job.order_name,
+    })
     waited = 0
     while waited <= max_wait_sec:
         s = did_status(talk_id)
@@ -223,24 +225,30 @@ def poll_and_notify_did(job: Job, talk_id: str, max_wait_sec: int = 600, every_s
         if st == "done" and video_url:
             if job.to_email:
                 html = (
-                    '<p>Ciao! 👋</p><p>Il tuo <b>Video Parlante AI</b> è pronto.</p>'
+                    "<p>Ciao! 👋</p><p>Il tuo <b>Video Parlante AI</b> è pronto.</p>"
                     f'<p><a href="{video_url}" target="_blank">Scarica il video</a></p>'
                 )
                 send_email(job.to_email, f"Video AI pronto — Ordine {job.order_name or ''}", html)
             return
         if st in ("error", "failed"):
             if job.to_email:
-                send_email(job.to_email, f"Problema con il tuo Video AI — Ordine {job.order_name or ''}",
-                           "<p>Si è verificato un errore. Ti contatteremo a breve.</p>")
+                send_email(
+                    job.to_email,
+                    f"Problema con il tuo Video AI — Ordine {job.order_name or ''}",
+                    "<p>Si è verificato un errore. Ti contatteremo a breve.</p>",
+                )
             return
         time.sleep(every_sec)
         waited += every_sec
     if job.to_email:
-        send_email(job.to_email, f"Stiamo completando il tuo Video AI — Ordine {job.order_name or ''}",
-                   "<p>La generazione richiede più tempo del previsto. Ti avviseremo appena pronto.</p>")
+        send_email(
+            job.to_email,
+            f"Stiamo completando il tuo Video AI — Ordine {job.order_name or ''}",
+            "<p>La generazione richiede più tempo del previsto. Ti avviseremo appena pronto.</p>",
+        )
 
 # =========================
-# HEYGEN (Avatar → Talking Video)
+# HEYGEN
 # =========================
 def _heygen_headers():
     if not HEYGEN_KEY:
@@ -250,13 +258,7 @@ def _heygen_headers():
         "Content-Type": "application/json",
     }
 
-
 def _ensure_avatar(aid: Optional[str]) -> str:
-    """
-    Ritorna sempre un avatar valido:
-    - se passo avatar_id uso quello
-    - altrimenti prendo HEYGEN_AVATAR
-    """
     aid = (aid or "").strip() or (HEYGEN_AVATAR or "").strip()
     if not aid:
         raise HTTPException(500, "HEYGEN_AVATAR_ID mancante")
@@ -265,22 +267,12 @@ def _ensure_avatar(aid: Optional[str]) -> str:
 def heygen_submit_text(script: str,
                        avatar_id: Optional[str] = None,
                        voice_id: Optional[str] = None) -> str:
-    """
-    Crea un video da TESTO usando HeyGen v2.
-    Forziamo SEMPRE un voice_id valido:
-    - se arriva da parametro, usa quello
-    - altrimenti usa HEYGEN_VOICE_ID da ENV
-    - se ancora vuoto, usa 'it_male_energetic'
-    """
     aid = _ensure_avatar(avatar_id)
 
-    # voice_id definitivo
     vid_voice_id = (voice_id or HEYGEN_VOICE_ID or "").strip()
     if not vid_voice_id:
-        vid_voice_id = "it_male_energetic"  # fallback sicuro
-
-    # DEBUG (puoi tenerlo o toglierlo dopo i test)
-    print("[EVS] heygen_submit_text con voice_id:", vid_voice_id)
+        # fallback sicuro
+        vid_voice_id = "it_male_energetic"
 
     video_input: Dict[str, Any] = {
         "avatar_id": aid,
@@ -308,30 +300,22 @@ def heygen_submit_text(script: str,
         timeout=120,
     )
     if r.status_code != 200:
-        # LOG A VIDEO_ID FALLITO
-        print("[EVS] ERRORE heygen_submit_text:", r.status_code, r.text)
         raise HTTPException(r.status_code, f"HeyGen v2 submit error: {r.text}")
-
     data = r.json().get("data", {}) or {}
     vid = data.get("video_id") or data.get("id")
     if not vid:
-        print("[EVS] ERRORE: risposta senza video_id:", r.text)
         raise HTTPException(502, f"HeyGen v2: risposta senza video_id: {r.text}")
     return vid
 
 def heygen_submit_audio(audio_url: str,
                         avatar_id: Optional[str] = None) -> str:
-    """
-    Crea un video da AUDIO esistente (url pubblico) usando HeyGen v2.
-    NB: per ora se fallisce facciamo fallback su TESTO in evs_launch_heygen.
-    """
     aid = _ensure_avatar(avatar_id)
 
     video_input: Dict[str, Any] = {
         "avatar_id": aid,
         "voice": {
             "type": "audio",
-            "audio": {              # <-- campo corretto secondo l’errore HeyGen
+            "audio": {
                 "audio_src_url": audio_url,
             },
         },
@@ -367,7 +351,6 @@ def heygen_status(video_id: str) -> Dict[str, Any]:
     )
     if r.status_code == 200:
         return r.json()
-    # fallback v1 solo per sicurezza
     r2 = requests.get(
         f"https://api.heygen.com/v1/video.status?video_id={video_id}",
         headers=_heygen_headers(),
@@ -382,8 +365,13 @@ def heygen_status(video_id: str) -> Dict[str, Any]:
 
 def poll_and_notify_heygen(video_id: str, to_email: Optional[str], order_name: Optional[str] = None,
                            every_sec: int = 7, max_wait_sec: int = 1200):
-    _jobs_upsert(video_id, {"id": video_id, "provider": "heygen", "status": "queued",
-                            "to_email": to_email, "order_name": order_name})
+    _jobs_upsert(video_id, {
+        "id": video_id,
+        "provider": "heygen",
+        "status": "queued",
+        "to_email": to_email,
+        "order_name": order_name,
+    })
     waited = 0
     while waited <= max_wait_sec:
         try:
@@ -399,35 +387,48 @@ def poll_and_notify_heygen(video_id: str, to_email: Optional[str], order_name: O
         if status in {"completed", "done", "succeeded"} and video_url:
             if to_email:
                 html = (
-                    '<p>Ciao! 👋</p><p>Il tuo <b>Video Avatar</b> è pronto.</p>'
+                    "<p>Ciao! 👋</p><p>Il tuo <b>Video Avatar</b> è pronto.</p>"
                     f'<p><a href="{video_url}" target="_blank">Scarica il video</a></p>'
                 )
                 send_email(to_email, f"Video Avatar pronto — Ordine {order_name or ''}", html)
             return
         if status in {"failed", "error", "canceled"}:
             if to_email:
-                send_email(to_email, f"Problema con il tuo Video Avatar — Ordine {order_name or ''}",
-                           "<p>Si è verificato un errore. Ti contatteremo a breve.</p>")
+                send_email(
+                    to_email,
+                    f"Problema con il tuo Video Avatar — Ordine {order_name or ''}",
+                    "<p>Si è verificato un errore. Ti contatteremo a breve.</p>",
+                )
             return
         time.sleep(every_sec); waited += every_sec
     if to_email:
-        send_email(to_email, f"Stiamo completando il tuo Video Avatar — Ordine {order_name or ''}",
-                   "<p>La generazione richiede più tempo del previsto. Ti avviseremo appena pronto.</p>")
-
+        send_email(
+            to_email,
+            f"Stiamo completando il tuo Video Avatar — Ordine {order_name or ''}",
+            "<p>La generazione richiede più tempo del previsto. Ti avviseremo appena pronto.</p>",
+        )
 
 # =========================
 # META & DIAG
 # =========================
 @app.get("/", tags=["meta"])
 def root():
-    return {"ok": True, "service": "EccomiVideoAutomation", "version": "2.3",
-            "health": "/api/health", "docs": "/docs", "dashboard": "/dashboard"}
+    return {
+        "ok": True,
+        "service": "EccomiVideoAutomation",
+        "version": "2.3",
+        "health": "/api/health",
+        "docs": "/docs",
+        "dashboard": "/dashboard",
+    }
 
 @app.get("/favicon.ico", include_in_schema=False)
-def favicon(): return Response(status_code=204)
+def favicon():
+    return Response(status_code=204)
 
 @app.get("/api/health")
-def health(): return {"ok": True, "service": "EccomiVideoAutomation", "version": "2.3"}
+def health():
+    return {"ok": True, "service": "EccomiVideoAutomation", "version": "2.3"}
 
 @app.get("/api/diag/env")
 def diag_env():
@@ -449,29 +450,39 @@ def diag_env():
         "EVS_STORAGE_DIR": EVS_STORAGE_DIR,
     }
 
-
 # =========================
-# PIPELINE D-ID: API
+# D-ID API
 # =========================
 @app.post("/api/jobs/photo")
-@app.post("/api/jobs")  # compat
+@app.post("/api/jobs")
 def create_job_photo(job: Job, bg: BackgroundTasks):
     talk = did_create_talk(job)
     talk_id = talk.get("id")
     if talk_id:
-        _jobs_upsert(talk_id, {"id": talk_id, "provider": "d-id", "status": "submitted",
-                               "to_email": job.to_email, "order_name": job.order_name, "raw": talk})
+        _jobs_upsert(talk_id, {
+            "id": talk_id,
+            "provider": "d-id",
+            "status": "submitted",
+            "to_email": job.to_email,
+            "order_name": job.order_name,
+            "raw": talk,
+        })
         bg.add_task(poll_and_notify_did, job, talk_id)
     return {"ok": True, "provider": "d-id", "talk_id": talk_id, "raw": talk}
 
 # =========================
-# PIPELINE HEYGEN: API
+# HEYGEN API
 # =========================
 @app.post("/api/heygen/submit")
 def heygen_submit_endpoint(body: HeygenText, bg: BackgroundTasks):
     vid = heygen_submit_text(body.script, body.avatar_id, body.voice_id)
-    _jobs_upsert(vid, {"id": vid, "provider": "heygen", "status": "submitted",
-                       "to_email": body.to_email, "order_name": body.order_name})
+    _jobs_upsert(vid, {
+        "id": vid,
+        "provider": "heygen",
+        "status": "submitted",
+        "to_email": body.to_email,
+        "order_name": body.order_name,
+    })
     if body.to_email:
         bg.add_task(poll_and_notify_heygen, vid, body.to_email, body.order_name)
     return {"ok": True, "provider": "heygen", "video_id": vid}
@@ -479,8 +490,13 @@ def heygen_submit_endpoint(body: HeygenText, bg: BackgroundTasks):
 @app.post("/api/heygen/submit-audio")
 def heygen_submit_audio_endpoint(body: HeygenAudio, bg: BackgroundTasks):
     vid = heygen_submit_audio(body.audio_url, body.avatar_id)
-    _jobs_upsert(vid, {"id": vid, "provider": "heygen", "status": "submitted",
-                       "to_email": body.to_email, "order_name": body.order_name})
+    _jobs_upsert(vid, {
+        "id": vid,
+        "provider": "heygen",
+        "status": "submitted",
+        "to_email": body.to_email,
+        "order_name": body.order_name,
+    })
     if body.to_email:
         bg.add_task(poll_and_notify_heygen, vid, body.to_email, body.order_name)
     return {"ok": True, "provider": "heygen", "video_id": vid}
@@ -492,7 +508,7 @@ def heygen_status_endpoint(video_id: str = Query(..., min_length=4)):
     return heygen_status(video_id)
 
 # =========================
-# ADMIN API (Bearer)
+# ADMIN API
 # =========================
 @app.get("/api/admin/jobs")
 def admin_jobs(_: bool = Depends(require_admin_header)):
@@ -502,28 +518,96 @@ def admin_jobs(_: bool = Depends(require_admin_header)):
 def admin_job_detail(job_id: str, _: bool = Depends(require_admin_header)):
     with JOBS_LOCK:
         j = JOBS.get(job_id)
-    if not j: raise HTTPException(404, "Job not found")
+    if not j:
+        raise HTTPException(404, "Job not found")
     return {"ok": True, "job": j}
 
 @app.post("/api/admin/resend-email/{job_id}")
 def admin_resend_email(job_id: str, _: bool = Depends(require_admin_header)):
     with JOBS_LOCK:
         j = JOBS.get(job_id)
-    if not j: raise HTTPException(404, "Job not found")
-    if not j.get("to_email"): raise HTTPException(400, "Job senza email")
-    if not j.get("video_url"): raise HTTPException(400, "Video non pronto")
+    if not j:
+        raise HTTPException(404, "Job not found")
+    if not j.get("to_email"):
+        raise HTTPException(400, "Job senza email")
+    if not j.get("video_url"):
+        raise HTTPException(400, "Video non pronto")
     html = (
-        '<p>Ciao! 👋</p><p>Il tuo video è pronto.</p>'
+        "<p>Ciao! 👋</p><p>Il tuo video è pronto.</p>"
         f'<p><a href="{j["video_url"]}" target="_blank">Scarica</a></p>'
     )
-    send_email(j["to_email"], f"Video pronto — Ordine {j.get('order_name','')}", html)
+    send_email(j["to_email"], f"Video pronto — Ordine {j.get('order_name', '')}", html)
     return {"ok": True, "resent": True}
 
 # =========================
-# SHOPIFY: CREATE PRODUCT
+# SHOPIFY PRODUCT (facoltativo)
 # =========================
+def _shop_headers():
+    if not (SHOP_DOMAIN and SHOP_ADMIN_TOKEN):
+        raise HTTPException(500, "SHOP_DOMAIN/SHOP_ADMIN_TOKEN mancanti")
+    return {
+        "X-Shopify-Access-Token": SHOP_ADMIN_TOKEN,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+def shopify_create_product(title: str, body_html: str, price: float,
+                           image_url: Optional[str] = None,
+                           published: bool = True,
+                           tags: Optional[List[str]] = None) -> Dict[str, Any]:
+    payload = {
+        "product": {
+            "title": title,
+            "body_html": body_html,
+            "tags": ", ".join(tags or ["EccomiVideo"]),
+            "status": "active" if published else "draft",
+            "variants": [{"price": f"{price:.2f}"}],
+        }
+    }
+    if image_url:
+        payload["product"]["images"] = [{"src": image_url}]
+    url = f"https://{SHOP_DOMAIN}/admin/api/{SHOPIFY_API_VER}/products.json"
+    r = requests.post(url, headers=_shop_headers(), json=payload, timeout=60)
+    if r.status_code not in (200, 201):
+        raise HTTPException(r.status_code, f"Shopify create product error: {r.text}")
+    return r.json()
+
+@app.post("/api/admin/publish/{job_id}")
+def admin_publish(job_id: str,
+                  price: float = 19.0,
+                  published: bool = True,
+                  _: bool = Depends(require_admin_header)):
+    with JOBS_LOCK:
+        j = JOBS.get(job_id)
+    if not j:
+        raise HTTPException(404, "Job not found")
+    if not j.get("video_url"):
+        raise HTTPException(400, "Video non pronto")
+
+    title = f"Video AI — {j.get('provider', '')}".strip()
+    desc = []
+    if j.get("order_name"):
+        desc.append(f"<p><b>Ordine:</b> {j['order_name']}</p>")
+    if j.get("to_email"):
+        desc.append(f"<p><b>Email cliente:</b> {j['to_email']}</p>")
+    desc.append(f'<p><a href="{j["video_url"]}" target="_blank">Scarica il video</a></p>')
+    body_html = "\n".join(desc)
+
+    img = j.get("thumbnail") or None
+    res = shopify_create_product(title=title,
+                                 body_html=body_html,
+                                 price=price,
+                                 image_url=img,
+                                 published=published)
+    prod = (res or {}).get("product") or {}
+    handle = prod.get("handle")
+    pid = prod.get("id")
+    url = f"https://www.eccomionline.com/products/{handle}" if handle else ""
+    _jobs_upsert(job_id, {"shopify_product_id": pid, "shopify_url": url})
+    return {"ok": True, "product_id": pid, "product_url": url}
+
 # =========================
-# EVS — RACCOLTA ORDINI DA SHOPIFY
+# EVS: ORDINI DA SHOPIFY
 # =========================
 @app.post("/evs/order", tags=["evs"])
 async def evs_create_order(
@@ -534,33 +618,19 @@ async def evs_create_order(
     photo: UploadFile = File(...),
     audio: Optional[UploadFile] = File(None),
 ):
-    """
-    Riceve i dati dalla modale EVS su Shopify:
-    - email cliente
-    - consenso
-    - testo/script opzionale
-    - link di riferimento opzionale
-    - foto obbligatoria
-    - audio opzionale
-    Ritorna un evs_token da salvare nel carrello.
-    """
-
     if not consent:
         raise HTTPException(status_code=400, detail="Consenso obbligatorio")
 
     order_id = str(uuid.uuid4())
 
-    # Crea cartella dedicata per questo ordine
     order_dir = EVS_STORAGE / order_id
     order_dir.mkdir(parents=True, exist_ok=True)
 
-    # Salva foto
     photo_ext = os.path.splitext(photo.filename or "")[1] or ".png"
     photo_path = order_dir / f"photo{photo_ext}"
     with photo_path.open("wb") as f:
         f.write(await photo.read())
 
-    # Salva audio (se presente)
     audio_path = None
     if audio is not None:
         audio_ext = os.path.splitext(audio.filename or "")[1] or ".wav"
@@ -568,7 +638,6 @@ async def evs_create_order(
         with audio_path.open("wb") as f:
             f.write(await audio.read())
 
-    # Salva metadata ordine
     meta = {
         "order_id": order_id,
         "email": email,
@@ -586,68 +655,12 @@ async def evs_create_order(
     except Exception as e:
         print("❌ EVS meta save error:", e)
 
-    # Risposta al frontend
     return JSONResponse({"ok": True, "evs_token": order_id})
-
-def _shop_headers():
-    if not (SHOP_DOMAIN and SHOP_ADMIN_TOKEN):
-        raise HTTPException(500, "SHOP_DOMAIN/SHOP_ADMIN_TOKEN mancanti")
-    return {
-        "X-Shopify-Access-Token": SHOP_ADMIN_TOKEN,
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-
-def shopify_create_product(title: str, body_html: str, price: float, image_url: Optional[str] = None,
-                           published: bool = True, tags: Optional[List[str]] = None) -> Dict[str, Any]:
-    payload = {
-        "product": {
-            "title": title,
-            "body_html": body_html,
-            "tags": ", ".join(tags or ["EccomiVideo"]),
-            "status": "active" if published else "draft",
-            "variants": [{"price": f"{price:.2f}"}]
-        }
-    }
-    if image_url:
-        payload["product"]["images"] = [{"src": image_url}]
-    url = f"https://{SHOP_DOMAIN}/admin/api/{SHOPIFY_API_VER}/products.json"
-    r = requests.post(url, headers=_shop_headers(), json=payload, timeout=60)
-    if r.status_code not in (200, 201):
-        raise HTTPException(r.status_code, f"Shopify create product error: {r.text}")
-    return r.json()
-
-@app.post("/api/admin/publish/{job_id}")
-def admin_publish(job_id: str, price: float = 19.0, published: bool = True,
-                  _: bool = Depends(require_admin_header)):
-    with JOBS_LOCK:
-        j = JOBS.get(job_id)
-    if not j: raise HTTPException(404, "Job not found")
-    if not j.get("video_url"): raise HTTPException(400, "Video non pronto")
-
-    title = f"Video AI — {j.get('provider','')}".strip()
-    desc = []
-    if j.get("order_name"): desc.append(f"<p><b>Ordine:</b> {j['order_name']}</p>")
-    if j.get("to_email"):   desc.append(f"<p><b>Email cliente:</b> {j['to_email']}</p>")
-    desc.append(f'<p><a href="{j["video_url"]}" target="_blank">Scarica il video</a></p>')
-    body_html = "\n".join(desc)
-
-    img = j.get("thumbnail") or None  # puoi valorizzarlo in futuro
-    res = shopify_create_product(title=title, body_html=body_html, price=price, image_url=img, published=published)
-    prod = (res or {}).get("product") or {}
-    handle = prod.get("handle"); pid = prod.get("id")
-    url = f"https://www.eccomionline.com/products/{handle}" if handle else ""
-    _jobs_upsert(job_id, {"shopify_product_id": pid, "shopify_url": url})
-    return {"ok": True, "product_id": pid, "product_url": url}
-# ---- EVS: lettura ordini salvati su disco ----
-from typing import List  # in alto ce l'hai già, quindi ok se è duplicato
 
 def list_evs_orders(limit: int = 100) -> List[Dict[str, Any]]:
     orders: List[Dict[str, Any]] = []
     if not EVS_STORAGE.exists():
         return orders
-
-    # ordina per data di modifica (più recente in alto)
     for d in sorted(EVS_STORAGE.glob("*"), key=lambda p: p.stat().st_mtime, reverse=True):
         meta_path = d / "meta.json"
         if not meta_path.exists():
@@ -658,21 +671,14 @@ def list_evs_orders(limit: int = 100) -> List[Dict[str, Any]]:
         except Exception as e:
             print("⚠️ EVS meta read error:", e, meta_path)
             continue
-
-        # nel dubbio metto l'order_id = nome cartella
         m.setdefault("order_id", d.name)
         orders.append(m)
         if len(orders) >= limit:
             break
     return orders
 
-
 @app.get("/api/admin/evs-orders")
 def admin_evs_orders(_: bool = Depends(require_admin_header)):
-    """
-    Ritorna la lista degli ordini EVS salvati su data/evs_orders.
-    Proteggo con lo stesso ADMIN_TOKEN della dashboard.
-    """
     return {"ok": True, "orders": list_evs_orders()}
 
 def evs_update_meta(order_id: str, changes: Dict[str, Any]) -> Dict[str, Any]:
@@ -693,81 +699,39 @@ def evs_update_meta(order_id: str, changes: Dict[str, Any]) -> Dict[str, Any]:
 
     return meta
 
-
 def evs_launch_heygen(order_id: str,
                       order_name: Optional[str],
                       email: Optional[str],
                       bg: BackgroundTasks):
-    """
-    Lancia SEMPRE e SOLO HeyGen a TESTO per un ordine EVS.
 
-    - Legge meta.json dell'ordine
-    - Prende script_text (o un testo di default)
-    - Usa avatar_id e voice_id di default dalle ENV
-    - Registra il job in JOBS
-    - Aggiorna meta EVS
-    - Avvia il poll in background (se c'è email)
-    """
     order_dir = EVS_STORAGE / order_id
     meta_path = order_dir / "meta.json"
     if not meta_path.exists():
-        print(f"[EVS] meta non trovata per {order_id}")
+        print("[EVS] meta non trovata per", order_id)
         return
 
-    try:
-        with meta_path.open("r", encoding="utf-8") as f:
-            meta = json.load(f)
-    except Exception as e:
-        print(f"[EVS] errore lettura meta per {order_id}: {e}")
-        return
+    with meta_path.open("r", encoding="utf-8") as f:
+        meta = json.load(f)
 
-    # Script: se vuoto, testo di default
-    script = (meta.get("script_text") or "").strip()
-    if not script:
-        script = (
-            "Ciao! Il tuo Video AI da Foto Parlante di Eccomi Online è in lavorazione. "
-            "Ti avviseremo via email appena sarà pronto. "
-            "Grazie per aver scelto Eccomi Online!"
-        )
+    script = (meta.get("script_text") or "").strip() or \
+             "Ciao! Il tuo Video AI è in lavorazione. Ti avviseremo appena è pronto. 😊"
 
-    order_name_final = order_name or meta.get("shopify_order_name") or ""
-    email_final = email or meta.get("email") or None
-
-    print(f"[EVS] Lancio Heygen SOLO TESTO per token {order_id} (ordine {order_name_final})")
+    print(f"[EVS] Lancio Heygen SOLO TESTO per token {order_id} (ordine {order_name})")
 
     try:
-        # se avatar_id / voice_id sono None, heygen_submit_text userà le ENV
         video_id = heygen_submit_text(
             script=script,
             avatar_id=None,
             voice_id=None,
         )
-    except Exception as e:
-        # 👉 qui vediamo l’errore vero nei log e nella dashboard
-        print(f"[EVS] ERRORE heygen_submit_text per {order_id}: {e}")
-
-        # segno errore sul meta EVS
-        try:
-            evs_update_meta(order_id, {
-                "status": "ERROR",
-                "error": f"heygen_submit_text: {e}",
-            })
-        except Exception as e2:
-            print(f"[EVS] errore update meta dopo errore heygen per {order_id}: {e2}")
-
-        # creo comunque un job "errore" visibile in dashboard
-        _jobs_upsert(f"evs-{order_id}", {
-            "id": f"evs-{order_id}",
-            "provider": "heygen",
-            "status": "error",
-            "error": str(e),
-            "to_email": email_final,
-            "order_name": order_name_final,
-            "evs_token": order_id,
-        })
+    except HTTPException as e:
+        print(f"[EVS] ERRORE heygen_submit_text per {order_id}: {e.status_code}: {e.detail}")
+        evs_update_meta(order_id, {"status": f"ERROR_HEYGEN_{e.status_code}"})
         return
 
-    # Se arriviamo qui, submit HeyGen è andato bene
+    order_name_final = order_name or meta.get("shopify_order_name") or ""
+    email_final = email or meta.get("email") or None
+
     _jobs_upsert(video_id, {
         "id": video_id,
         "provider": "heygen",
@@ -777,20 +741,19 @@ def evs_launch_heygen(order_id: str,
         "evs_token": order_id,
     })
 
-    try:
-        evs_update_meta(order_id, {
-            "status": "PROCESSING",
-            "shopify_order_name": order_name_final,
-            "email": email_final,
-            "heygen_video_id": video_id,
-        })
-    except Exception as e:
-        print(f"[EVS] errore update meta (PROCESSING) per {order_id}: {e}")
+    evs_update_meta(order_id, {
+        "status": "PROCESSING",
+        "shopify_order_name": order_name_final,
+        "email": email_final,
+        "heygen_video_id": video_id,
+    })
 
-    # poll & email solo se ho una mail
     if email_final:
         bg.add_task(poll_and_notify_heygen, video_id, email_final, order_name_final)
 
+# =========================
+# SHOPIFY WEBHOOK
+# =========================
 def _verify_shopify_webhook(req: Request, raw_body: bytes):
     if not VERIFY_SHOPIFY_HMAC:
         return
@@ -801,7 +764,7 @@ def _verify_shopify_webhook(req: Request, raw_body: bytes):
     digest = hmac.new(
         SHOPIFY_WEBHOOK_SECRET.encode("utf-8"),
         raw_body,
-        hashlib.sha256
+        hashlib.sha256,
     ).digest()
     expected = base64.b64encode(digest).decode("utf-8")
 
@@ -809,14 +772,8 @@ def _verify_shopify_webhook(req: Request, raw_body: bytes):
         print("[EVS] Webhook HMAC non valido")
         raise HTTPException(401, "Webhook HMAC non valido")
 
-
 @app.post("/shopify/webhook", tags=["shopify"])
 async def shopify_webhook(request: Request, bg: BackgroundTasks):
-    """
-    Riceve l'aggiornamento ordine da Shopify.
-    Se l'ordine è PAID e contiene un prodotto con EVS Token,
-    lancia automaticamente Heygen per quell'ordine EVS.
-    """
     raw = await request.body()
     _verify_shopify_webhook(request, raw)
 
@@ -827,7 +784,6 @@ async def shopify_webhook(request: Request, bg: BackgroundTasks):
 
     financial_status = payload.get("financial_status")
     if financial_status not in ("paid", "partially_paid"):
-        # ignoriamo bozze, aperti, pending, cancellati ecc.
         return {"ok": True, "ignored": "not_paid", "status": financial_status}
 
     order_name = payload.get("name") or ""
@@ -849,7 +805,6 @@ async def shopify_webhook(request: Request, bg: BackgroundTasks):
 
     for tok in tokens:
         try:
-            # segno lo stato come PAID e lancio Heygen
             evs_update_meta(tok, {"status": "PAID"})
             evs_launch_heygen(tok, order_name, email, bg)
         except Exception as e:
@@ -857,16 +812,11 @@ async def shopify_webhook(request: Request, bg: BackgroundTasks):
 
     return {"ok": True, "processed_tokens": tokens}
 
-
 # =========================
-# EVS: FILE PUBBLICI (per Heygen)
+# EVS FILE PUBLIC
 # =========================
 @app.get("/evs/file/{order_id}/{kind}", tags=["evs"])
 def evs_file(order_id: str, kind: str):
-    """
-    Rende pubblica la foto o l'audio di un ordine EVS.
-    kind = "photo" | "audio"
-    """
     order_dir = EVS_STORAGE / order_id
     meta_path = order_dir / "meta.json"
     if not meta_path.exists():
@@ -898,9 +848,8 @@ def evs_file(order_id: str, kind: str):
 
     return Response(content=data, media_type=ctype)
 
-
 # =========================
-# DASHBOARD + CREATOR PANEL
+# DASHBOARD
 # =========================
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard_page():
