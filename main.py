@@ -267,14 +267,20 @@ def heygen_submit_text(script: str,
                        voice_id: Optional[str] = None) -> str:
     """
     Crea un video da TESTO usando HeyGen v2.
-    Forziamo un voice_id valido (it_male_energetic) se non viene passato.
+    Forziamo SEMPRE un voice_id valido:
+    - se arriva da parametro, usa quello
+    - altrimenti usa HEYGEN_VOICE_ID da ENV
+    - se ancora vuoto, usa 'it_male_energetic'
     """
     aid = _ensure_avatar(avatar_id)
 
-    # voice_id definitivo: parametro -> env -> default sicuro
+    # voice_id definitivo
     vid_voice_id = (voice_id or HEYGEN_VOICE_ID or "").strip()
     if not vid_voice_id:
-        vid_voice_id = "it_male_energetic"
+        vid_voice_id = "it_male_energetic"  # fallback sicuro
+
+    # DEBUG (puoi tenerlo o toglierlo dopo i test)
+    print("[EVS] heygen_submit_text con voice_id:", vid_voice_id)
 
     video_input: Dict[str, Any] = {
         "avatar_id": aid,
@@ -302,13 +308,16 @@ def heygen_submit_text(script: str,
         timeout=120,
     )
     if r.status_code != 200:
+        # LOG A VIDEO_ID FALLITO
+        print("[EVS] ERRORE heygen_submit_text:", r.status_code, r.text)
         raise HTTPException(r.status_code, f"HeyGen v2 submit error: {r.text}")
+
     data = r.json().get("data", {}) or {}
     vid = data.get("video_id") or data.get("id")
     if not vid:
+        print("[EVS] ERRORE: risposta senza video_id:", r.text)
         raise HTTPException(502, f"HeyGen v2: risposta senza video_id: {r.text}")
     return vid
-
 
 def heygen_submit_audio(audio_url: str,
                         avatar_id: Optional[str] = None) -> str:
