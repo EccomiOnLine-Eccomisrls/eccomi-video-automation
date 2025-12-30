@@ -751,6 +751,62 @@ def evs_launch_heygen(order_id: str,
     if email_final:
         bg.add_task(poll_and_notify_heygen, video_id, email_final, order_name_final)
 
+def evs_launch_did(order_id: str,
+                   order_name: Optional[str],
+                   email: Optional[str],
+                   bg: BackgroundTasks):
+
+    order_dir = EVS_STORAGE / order_id
+    meta_path = order_dir / "meta.json"
+    if not meta_path.exists():
+        print("[EVS] meta non trovata per", order_id)
+        return
+
+    with meta_path.open("r", encoding="utf-8") as f:
+        meta = json.load(f)
+
+    if not PUBLIC_BASE_URL:
+        print("[EVS] PUBLIC_BASE_URL mancante: impossibile usare D-ID fallback")
+        evs_update_meta(order_id, {"status": "ERROR_PUBLIC_BASE_URL"})
+        return
+
+    photo_url = f"{PUBLIC_BASE_URL}/evs/file/{order_id}/photo"
+    audio_url = f"{PUBLIC_BASE_URL}/evs/file/{order_id}/audio" if meta.get("audio_path") else None
+
+    job = Job(
+        image_url=photo_url,
+        script=(meta.get("script_text") or "").strip() or "Ciao! Il tuo video è pronto. 😊",
+        audio_url=audio_url,
+        to_email=email or meta.get("email"),
+        order_name=order_name or meta.get("shopify_order_name") or "",
+    )
+
+    print(f"[EVS] Fallback D-ID per token {order_id}")
+
+    talk = did_create_talk(job)
+    talk_id = talk.get("id")
+    if not talk_id:
+        print("[EVS] ERRORE: talk_id mancante")
+        evs_update_meta(order_id, {"status": "ERROR_DID_NO_TALK_ID"})
+        return
+
+    _jobs_upsert(talk_id, {
+        "id": talk_id,
+        "provider": "d-id",
+        "status": "submitted",
+        "to_email": job.to_email,
+        "order_name": job.order_name,
+        "evs_token": order_id,
+        "raw": talk,
+    })
+
+    evs_update_meta(order_id, {
+        "status": "PROCESSING_DID",
+        "did_talk_id": talk_id,
+    })
+
+    bg.add_task(poll_and_notify_did, job, talk_id)
+
 # =========================
 # SHOPIFY WEBHOOK
 # =========================
