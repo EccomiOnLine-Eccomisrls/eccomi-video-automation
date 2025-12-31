@@ -725,11 +725,11 @@ def evs_launch_heygen(order_id: str,
             voice_id=None,
         )
     except HTTPException as e:
-    print(f"[EVS] ERRORE HeyGen {e.status_code} → fallback D-ID per {order_id}")
-    evs_update_meta(order_id, {"status": f"HEYGEN_FAILED_{e.status_code}"})
-    evs_launch_did(order_id, order_name, email, bg)
-    return
-
+        print(f"[EVS] ERRORE HeyGen {e.status_code} → fallback D-ID per {order_id}")
+        evs_update_meta(order_id, {"status": f"HEYGEN_FAILED_{e.status_code}"})
+        evs_launch_did(order_id, order_name, email, bg)
+        return
+        
     order_name_final = order_name or meta.get("shopify_order_name") or ""
     email_final = email or meta.get("email") or None
 
