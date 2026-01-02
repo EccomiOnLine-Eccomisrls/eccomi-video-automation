@@ -264,62 +264,33 @@ def _ensure_avatar(aid: Optional[str]) -> str:
         raise HTTPException(500, "HEYGEN_AVATAR_ID mancante")
     return aid
 
-def heygen_submit_text(script: str,
-                       avatar_id: Optional[str] = None,
-                       voice_id: Optional[str] = None) -> str:
-    """
-    Crea un video da TESTO usando HeyGen v2.
-    voice_id è OBBLIGATORIO → forziamo sempre un valore valido.
-    """
-
-    aid = _ensure_avatar(avatar_id)
-
-    # 🔒 VOICE ID HARD FIX (mai None)
-    vid_voice_id = (
-        voice_id
-        or HEYGEN_VOICE_ID
-        or "it_male_energetic"
-    )
-
-    video_input = {
-        "avatar_id": aid,
-        "voice": {
-            "type": "text",
-            "text": {
-                "input_text": script,
-                "voice_id": vid_voice_id,  # ✅ SEMPRE PRESENTE
-            },
-        },
+def heygen_submit_text(script_text: str, avatar_id: str, voice_id: str):
+    url = "https://api.heygen.com/v2/video/generate"
+    headers = {
+        "X-Api-Key": HEYGEN_API_KEY,
+        "Content-Type": "application/json"
     }
 
     payload = {
-        "video_inputs": [video_input],
-        "test": False,
-        "caption": False,
-        "aspect_ratio": "9:16",
-        "resolution": "720p",
+        "video_inputs": [{
+            "character": {
+                "type": "avatar",
+                "avatar_id": avatar_id
+            },
+            "voice": {
+                "type": "text",
+                "voice_id": voice_id,
+                "input_text": script_text
+            }
+        }]
     }
 
-    r = requests.post(
-        "https://api.heygen.com/v2/video/generate",
-        headers=_heygen_headers(),
-        json=payload,
-        timeout=120,
-    )
+    r = requests.post(url, json=payload, headers=headers, timeout=60)
 
     if r.status_code != 200:
-        raise HTTPException(
-            r.status_code,
-            f"HeyGen v2 submit error: {r.text}"
-        )
+        raise Exception(f"HeyGen error {r.status_code}: {r.text}")
 
-    data = r.json().get("data") or {}
-    video_id = data.get("video_id") or data.get("id")
-
-    if not video_id:
-        raise HTTPException(502, "HeyGen: video_id mancante")
-
-    return video_id
+    return r.json()["data"]["video_id"]
 
 def heygen_submit_audio(audio_url: str,
                         avatar_id: Optional[str] = None) -> str:
