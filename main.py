@@ -267,20 +267,27 @@ def _ensure_avatar(aid: Optional[str]) -> str:
 def heygen_submit_text(script: str,
                        avatar_id: Optional[str] = None,
                        voice_id: Optional[str] = None) -> str:
+    """
+    Crea un video da TESTO usando HeyGen v2.
+    voice_id è OBBLIGATORIO → forziamo sempre un valore valido.
+    """
+
     aid = _ensure_avatar(avatar_id)
 
-    vid_voice_id = (voice_id or HEYGEN_VOICE_ID or "").strip()
-    if not vid_voice_id:
-        # fallback sicuro
-        vid_voice_id = "it_male_energetic"
+    # 🔒 VOICE ID HARD FIX (mai None)
+    vid_voice_id = (
+        voice_id
+        or HEYGEN_VOICE_ID
+        or "it_male_energetic"
+    )
 
-    video_input: Dict[str, Any] = {
+    video_input = {
         "avatar_id": aid,
         "voice": {
             "type": "text",
             "text": {
                 "input_text": script,
-                "voice_id": vid_voice_id,
+                "voice_id": vid_voice_id,  # ✅ SEMPRE PRESENTE
             },
         },
     }
@@ -299,13 +306,20 @@ def heygen_submit_text(script: str,
         json=payload,
         timeout=120,
     )
+
     if r.status_code != 200:
-        raise HTTPException(r.status_code, f"HeyGen v2 submit error: {r.text}")
-    data = r.json().get("data", {}) or {}
-    vid = data.get("video_id") or data.get("id")
-    if not vid:
-        raise HTTPException(502, f"HeyGen v2: risposta senza video_id: {r.text}")
-    return vid
+        raise HTTPException(
+            r.status_code,
+            f"HeyGen v2 submit error: {r.text}"
+        )
+
+    data = r.json().get("data") or {}
+    video_id = data.get("video_id") or data.get("id")
+
+    if not video_id:
+        raise HTTPException(502, "HeyGen: video_id mancante")
+
+    return video_id
 
 def heygen_submit_audio(audio_url: str,
                         avatar_id: Optional[str] = None) -> str:
@@ -719,11 +733,11 @@ def evs_launch_heygen(order_id: str,
     print(f"[EVS] Lancio Heygen SOLO TESTO per token {order_id} (ordine {order_name})")
 
     try:
-        video_id = heygen_submit_text(
-            script=script,
-            avatar_id=None,
-            voice_id=None,
-        )
+  video_id = heygen_submit_text(
+      script=script,
+      avatar_id=None,
+      voice_id=HEYGEN_VOICE_ID or "it_male_energetic"
+)
     except HTTPException as e:
         print(f"[EVS] ERRORE HeyGen {e.status_code} → fallback D-ID per {order_id}")
         evs_update_meta(order_id, {"status": f"HEYGEN_FAILED_{e.status_code}"})
