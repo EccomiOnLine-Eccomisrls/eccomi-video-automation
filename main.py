@@ -733,10 +733,10 @@ def evs_launch_heygen(order_id: str,
     print(f"[EVS] Lancio Heygen SOLO TESTO per token {order_id} (ordine {order_name})")
 
     try:
-  video_id = heygen_submit_text(
-      script=script,
-      avatar_id=None,
-      voice_id=HEYGEN_VOICE_ID or "it_male_energetic"
+        video_id = heygen_submit_text(
+        script=script,
+        avatar_id=None,
+        voice_id=HEYGEN_VOICE_ID or "it_male_energetic"
 )
     except HTTPException as e:
         print(f"[EVS] ERRORE HeyGen {e.status_code} → fallback D-ID per {order_id}")
