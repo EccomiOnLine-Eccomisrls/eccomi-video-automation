@@ -22,6 +22,9 @@ HEYGEN_KEY = os.getenv("HEYGEN_KEY", "")
 HEYGEN_AVATAR = os.getenv("HEYGEN_AVATAR_ID", "")
 HEYGEN_VOICE_ID = os.getenv("HEYGEN_VOICE_ID", "it_male_energetic")
 
+print("DEBUG HEYGEN_KEY =", bool(HEYGEN_KEY))
+print("DEBUG globals has HEYGEN_API_KEY =", "HEYGEN_API_KEY" in globals())
+
 AVATAR_ID = HEYGEN_AVATAR
 VOICE_ID = HEYGEN_VOICE_ID
 
