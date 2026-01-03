@@ -18,7 +18,7 @@ DID_KEY = os.getenv("D_ID_API_KEY", "")
 RESEND_KEY = os.getenv("RESEND_API_KEY", "")
 FROM_EMAIL = os.getenv("FROM_EMAIL", "Eccomi Video <info@eccomionline.com>")
 
-HEYGEN_KEY = os.getenv("HEYGEN_API_KEY", "")
+HEYGEN_KEY = os.getenv("HEYGEN_KEY", "")
 HEYGEN_AVATAR = os.getenv("HEYGEN_AVATAR_ID", "")
 HEYGEN_VOICE_ID = os.getenv("HEYGEN_VOICE_ID", "it_male_energetic")
 
@@ -255,7 +255,7 @@ def poll_and_notify_did(job: Job, talk_id: str, max_wait_sec: int = 600, every_s
 # =========================
 def _heygen_headers():
     if not HEYGEN_KEY:
-        raise HTTPException(500, "HEYGEN_API_KEY mancante")
+        raise HTTPException(500, "HEYGEN_KEY mancante")
     return {
         "X-Api-Key": HEYGEN_KEY,
         "Content-Type": "application/json",
@@ -270,7 +270,7 @@ def _ensure_avatar(aid: Optional[str]) -> str:
 def heygen_submit_text(script_text: str, avatar_id: str, voice_id: str):
     url = "https://api.heygen.com/v2/video/generate"
     headers = {
-        "X-Api-Key": HEYGEN_API_KEY,
+        "X-Api-Key": HEYGEN_KEY,
         "Content-Type": "application/json"
     }
 
@@ -424,7 +424,7 @@ def diag_env():
         "RESEND_API_KEY": bool(RESEND_KEY),
         "FROM_EMAIL": FROM_EMAIL,
         "D_ID_API_KEY": bool(DID_KEY),
-        "HEYGEN_API_KEY": bool(HEYGEN_KEY),
+        "HEYGEN_KEY": bool(HEYGEN_KEY),
         "HEYGEN_AVATAR_ID": bool(HEYGEN_AVATAR),
         "HEYGEN_VOICE_ID": HEYGEN_VOICE_ID,
         "ELEVENLABS_API_KEY": bool(ELEVEN_KEY),
