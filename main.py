@@ -18,7 +18,7 @@ DID_KEY = os.getenv("D_ID_API_KEY", "")
 RESEND_KEY = os.getenv("RESEND_API_KEY", "")
 FROM_EMAIL = os.getenv("FROM_EMAIL", "Eccomi Video <info@eccomionline.com>")
 
-HEYGEN_KEY = os.getenv("HEYGEN_KEY", "")
+HEYGEN_KEY = os.getenv("HEYGEN_API_KEY", "")
 HEYGEN_AVATAR = os.getenv("HEYGEN_AVATAR_ID", "")
 HEYGEN_VOICE_ID = os.getenv("HEYGEN_VOICE_ID", "it_male_energetic")
 
