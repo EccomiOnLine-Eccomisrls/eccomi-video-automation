@@ -705,10 +705,10 @@ def evs_launch_heygen(order_id: str,
 
     try:
         video_id = heygen_submit_text(
-        script=script,
-        avatar_id=None,
-        voice_id=HEYGEN_VOICE_ID or "it_male_energetic"
-)
+            script_text=script,
+            avatar_id=AVATAR_ID,
+            voice_id=VOICE_ID,
+    )
     except HTTPException as e:
         print(f"[EVS] ERRORE HeyGen {e.status_code} → fallback D-ID per {order_id}")
         evs_update_meta(order_id, {"status": f"HEYGEN_FAILED_{e.status_code}"})
