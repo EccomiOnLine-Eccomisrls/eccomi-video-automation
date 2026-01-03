@@ -270,7 +270,13 @@ def _ensure_avatar(aid: Optional[str]) -> str:
         raise HTTPException(500, "HEYGEN_AVATAR_ID mancante")
     return aid
 
-def heygen_submit_text(script_text: str, avatar_id: str, voice_id: str):
+def heygen_submit_text(script_text: str,
+                       avatar_id: Optional[str],
+                       voice_id: Optional[str]):
+
+    aid = _ensure_avatar(avatar_id)
+    vid = voice_id or HEYGEN_VOICE_ID
+
     url = "https://api.heygen.com/v2/video/generate"
     headers = {
         "X-Api-Key": HEYGEN_KEY,
@@ -281,11 +287,11 @@ def heygen_submit_text(script_text: str, avatar_id: str, voice_id: str):
         "video_inputs": [{
             "character": {
                 "type": "avatar",
-                "avatar_id": avatar_id
+                "avatar_id": aid
             },
             "voice": {
                 "type": "text",
-                "voice_id": voice_id,
+                "voice_id": vid,
                 "input_text": script_text
             }
         }]
@@ -294,7 +300,7 @@ def heygen_submit_text(script_text: str, avatar_id: str, voice_id: str):
     r = requests.post(url, json=payload, headers=headers, timeout=60)
 
     if r.status_code != 200:
-        raise Exception(f"HeyGen error {r.status_code}: {r.text}")
+        raise HTTPException(r.status_code, f"HeyGen error: {r.text}")
 
     return r.json()["data"]["video_id"]
 
