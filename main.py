@@ -22,6 +22,9 @@ HEYGEN_KEY = os.getenv("HEYGEN_API_KEY", "")
 HEYGEN_AVATAR = os.getenv("HEYGEN_AVATAR_ID", "")
 HEYGEN_VOICE_ID = os.getenv("HEYGEN_VOICE_ID", "it_male_energetic")
 
+AVATAR_ID = HEYGEN_AVATAR
+VOICE_ID = HEYGEN_VOICE_ID
+
 ELEVEN_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVEN_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
 
