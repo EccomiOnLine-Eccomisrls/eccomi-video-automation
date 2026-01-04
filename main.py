@@ -263,44 +263,69 @@ def _heygen_headers():
         "X-Api-Key": HEYGEN_KEY,
         "Content-Type": "application/json",
     }
+    
+def heygen_get_avatar_id_from_group(group_id: str) -> str:
+    url = f"https://api.heygen.com/v2/avatars?group_id={group_id}"
+    r = requests.get(url, headers=_heygen_headers(), timeout=30)
 
+    if r.status_code != 200:
+        raise HTTPException(
+            r.status_code,
+            f"HeyGen avatars list error: {r.text}"
+        )
+
+    data = r.json().get("data") or []
+    if not data:
+        raise HTTPException(
+            404,
+            f"Nessun avatar trovato per group_id={group_id}"
+        )
+
+    # Prendiamo il primo avatar disponibile
+    avatar_id = data[0].get("avatar_id") or data[0].get("id")
+    if not avatar_id:
+        raise HTTPException(
+            500,
+            f"Risposta HeyGen senza avatar_id: {data}"
+        )
+
+    print(f"[HEYGEN] avatar_id risolto: {avatar_id}")
+    return avatar_id
+    
 def _ensure_avatar(aid: Optional[str]) -> str:
     aid = (aid or "").strip() or (HEYGEN_AVATAR or "").strip()
     if not aid:
         raise HTTPException(500, "HEYGEN_AVATAR_ID mancante")
     return aid
 
-def heygen_submit_text(script_text: str,
-                       avatar_id: Optional[str],
-                       voice_id: Optional[str]):
-
-    aid = _ensure_avatar(avatar_id)
-    vid = voice_id or HEYGEN_VOICE_ID
+def heygen_submit_text(script_text: str, avatar_id: str, voice_id: str):
+    # 🔁 Se arriva un group_id (32 char hex), lo risolviamo
+    if len(avatar_id) == 32:
+        avatar_id = heygen_get_avatar_id_from_group(avatar_id)
 
     url = "https://api.heygen.com/v2/video/generate"
-    headers = {
-        "X-Api-Key": HEYGEN_KEY,
-        "Content-Type": "application/json"
-    }
+    headers = _heygen_headers()
 
     payload = {
         "video_inputs": [{
             "character": {
                 "type": "avatar",
-                "avatar_id": aid
+                "avatar_id": avatar_id
             },
             "voice": {
                 "type": "text",
-                "voice_id": vid,
+                "voice_id": voice_id,
                 "input_text": script_text
             }
-        }]
+        }],
+        "aspect_ratio": "9:16",
+        "resolution": "720p"
     }
 
     r = requests.post(url, json=payload, headers=headers, timeout=60)
 
     if r.status_code != 200:
-        raise HTTPException(r.status_code, f"HeyGen error: {r.text}")
+        raise Exception(f"HeyGen error {r.status_code}: {r.text}")
 
     return r.json()["data"]["video_id"]
 
