@@ -63,7 +63,7 @@ def heygen_submit(body: HeyGenSubmitBody):
 
     if not talking_photo_id and body.image_url:
         r = requests.post(
-            f"{HEYGEN_BASE}/talking_photo",
+            f"{HEYGEN_BASE}/talking-photo",
             headers={
                 "X-Api-Key": HEYGEN_API_KEY,
                 "Content-Type": "application/json"
