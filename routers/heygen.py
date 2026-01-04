@@ -6,42 +6,93 @@ import os
 router = APIRouter()
 
 HEYGEN_API_KEY = os.getenv("HEYGEN_API_KEY")
-HEYGEN_URL = "https://api.heygen.com/v2/video/generate"
+HEYGEN_BASE = "https://api.heygen.com/v2"
+
+
+# =========================
+# MODELS
+# =========================
+
+class CreateTalkingPhotoBody(BaseModel):
+    image_url: str
 
 
 class HeyGenSubmitBody(BaseModel):
     script: str
-    avatar_id: str | None = None
     talking_photo_id: str | None = None
-    voice_id: str | None = None
+    image_url: str | None = None
+    voice_id: str | None = "it_male_energetic"
 
+
+# =========================
+# CREATE TALKING PHOTO
+# =========================
+
+@router.post("/api/heygen/talking-photo")
+def create_talking_photo(body: CreateTalkingPhotoBody):
+    if not HEYGEN_API_KEY:
+        raise HTTPException(500, "HEYGEN_API_KEY mancante")
+
+    r = requests.post(
+        f"{HEYGEN_BASE}/talking_photo",
+        headers={
+            "X-Api-Key": HEYGEN_API_KEY,
+            "Content-Type": "application/json"
+        },
+        json={"image_url": body.image_url},
+        timeout=30
+    )
+
+    if r.status_code != 200:
+        raise HTTPException(500, f"HeyGen error: {r.text}")
+
+    return r.json()
+
+
+# =========================
+# CREATE VIDEO (AUTO)
+# =========================
 
 @router.post("/api/heygen/submit")
 def heygen_submit(body: HeyGenSubmitBody):
     if not HEYGEN_API_KEY:
-        raise HTTPException(status_code=500, detail="HEYGEN_API_KEY mancante")
+        raise HTTPException(500, "HEYGEN_API_KEY mancante")
 
-    if not body.avatar_id and not body.talking_photo_id:
-        raise HTTPException(
-            status_code=400,
-            detail="Devi fornire avatar_id oppure talking_photo_id"
+    # 🔥 AUTO: se non ho talking_photo_id ma ho image_url → lo creo
+    talking_photo_id = body.talking_photo_id
+
+    if not talking_photo_id and body.image_url:
+        r = requests.post(
+            f"{HEYGEN_BASE}/talking_photo",
+            headers={
+                "X-Api-Key": HEYGEN_API_KEY,
+                "Content-Type": "application/json"
+            },
+            json={"image_url": body.image_url},
+            timeout=30
         )
 
-    # 🔥 PAYLOAD UFFICIALE HEYGEN (NON SBAGLIARE QUESTO)
+        if r.status_code != 200:
+            raise HTTPException(500, f"Talking photo error: {r.text}")
+
+        talking_photo_id = r.json()["data"]["talking_photo_id"]
+
+    if not talking_photo_id:
+        raise HTTPException(
+            400,
+            "Devi fornire image_url oppure talking_photo_id"
+        )
+
     payload = {
         "video_inputs": [
             {
                 "character": {
-                    "type": "talking_photo" if body.talking_photo_id else "avatar",
-                    **(
-                        {"talking_photo_id": body.talking_photo_id}
-                        if body.talking_photo_id
-                        else {"avatar_id": body.avatar_id}
-                    )
+                    "type": "talking_photo",
+                    "talking_photo_id": talking_photo_id
                 },
                 "voice": {
                     "type": "text",
-                    "voice_id": body.voice_id or "it_male_energetic",
+                    "voice_id": body.voice_id,
                     "input_text": body.script
                 }
             }
@@ -50,22 +101,17 @@ def heygen_submit(body: HeyGenSubmitBody):
         "resolution": "720p"
     }
 
-    headers = {
-        "X-Api-Key": HEYGEN_API_KEY,
-        "Content-Type": "application/json"
-    }
-
-    response = requests.post(
-        HEYGEN_URL,
+    r = requests.post(
+        f"{HEYGEN_BASE}/video/generate",
+        headers={
+            "X-Api-Key": HEYGEN_API_KEY,
+            "Content-Type": "application/json"
+        },
         json=payload,
-        headers=headers,
         timeout=60
     )
 
-    if response.status_code != 200:
-        raise HTTPException(
-            status_code=500,
-            detail=f"HeyGen error: {response.text}"
-        )
+    if r.status_code != 200:
+        raise HTTPException(500, f"HeyGen error: {r.text}")
 
-    return response.json()
+    return r.json()
