@@ -99,6 +99,9 @@ JOBS.update(_storage_load())
 # APP
 # =========================
 app = FastAPI(title="Eccomi Video Automation", version="2.3")
+
+app.include_router(heygen_router)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://www.eccomionline.com", "https://eccomionline.com", "*"],
