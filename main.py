@@ -312,25 +312,35 @@ def _ensure_avatar(aid: Optional[str]) -> str:
         raise HTTPException(500, "HEYGEN_AVATAR_ID mancante")
     return aid
 
-def heygen_submit_text(script_text: str,
-                       avatar_id: Optional[str],
-                       voice_id: Optional[str] = None) -> str:
+def heygen_submit_text(
+    script_text: str,
+    avatar_id: Optional[str],
+    voice_id: Optional[str] = None
+) -> str:
 
     if not HEYGEN_KEY:
         raise HTTPException(500, "HEYGEN_API_KEY mancante")
 
+    if not avatar_id:
+        raise HTTPException(400, "avatar_id mancante")
+
     payload = {
-        "script": {
-            "type": "text",
-            "input": script_text
-        }
+        "video_inputs": [
+            {
+                "character": {
+                    "type": "avatar",
+                    "avatar_id": avatar_id
+                },
+                "voice": {
+                    "type": "text",
+                    "voice_id": voice_id or "it_male_energetic",
+                    "input_text": script_text
+                }
+            }
+        ],
+        "aspect_ratio": "9:16",
+        "resolution": "720p"
     }
-
-    if avatar_id:
-        payload["avatar_id"] = avatar_id
-
-    if voice_id:
-        payload["voice_id"] = voice_id
 
     r = requests.post(
         "https://api.heygen.com/v2/video/generate",
@@ -346,7 +356,7 @@ def heygen_submit_text(script_text: str,
         )
 
     data = r.json().get("data") or {}
-    video_id = data.get("video_id") or data.get("id")
+    video_id = data.get("video_id")
 
     if not video_id:
         raise HTTPException(500, f"HeyGen risposta senza video_id: {r.text}")
