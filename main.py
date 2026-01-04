@@ -5,6 +5,7 @@ from threading import Lock
 from pathlib import Path
 
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Query, Depends, Header, UploadFile, File, Form
+from routers.heygen import router as heygen_router
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, HTMLResponse, JSONResponse
 from pydantic import BaseModel
