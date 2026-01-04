@@ -263,10 +263,17 @@ def _heygen_headers():
         "X-Api-Key": HEYGEN_KEY,
         "Content-Type": "application/json",
     }
-    
-def heygen_get_avatar_id_from_group(group_id: str) -> str:
+    def heygen_get_avatar_id_from_group(group_id: str) -> str:
+    if not group_id:
+        raise HTTPException(400, "group_id mancante")
+
     url = f"https://api.heygen.com/v2/avatars?group_id={group_id}"
-    r = requests.get(url, headers=_heygen_headers(), timeout=30)
+
+    r = requests.get(
+        url,
+        headers=_heygen_headers(),
+        timeout=30
+    )
 
     if r.status_code != 200:
         raise HTTPException(
@@ -274,19 +281,26 @@ def heygen_get_avatar_id_from_group(group_id: str) -> str:
             f"HeyGen avatars list error: {r.text}"
         )
 
-    data = r.json().get("data") or []
+    payload = r.json()
+    data = payload.get("data") or []
+
     if not data:
         raise HTTPException(
             404,
             f"Nessun avatar trovato per group_id={group_id}"
         )
 
-    # Prendiamo il primo avatar disponibile
-    avatar_id = data[0].get("avatar_id") or data[0].get("id")
+    # 🔐 RISOLUZIONE ROBUSTA AVATAR ID (copre TUTTI i casi HeyGen)
+    avatar_id = (
+        data[0].get("avatar_id")
+        or data[0].get("id")
+        or (data[0].get("avatar") or {}).get("avatar_id")
+    )
+
     if not avatar_id:
         raise HTTPException(
             500,
-            f"Risposta HeyGen senza avatar_id: {data}"
+            f"Risposta HeyGen senza avatar_id valido: {data[0]}"
         )
 
     print(f"[HEYGEN] avatar_id risolto: {avatar_id}")
