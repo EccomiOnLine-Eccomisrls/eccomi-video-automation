@@ -263,6 +263,7 @@ def _heygen_headers():
         "X-Api-Key": HEYGEN_KEY,
         "Content-Type": "application/json",
     }
+    
     def heygen_get_avatar_id_from_group(group_id: str) -> str:
     if not group_id:
         raise HTTPException(400, "group_id mancante")
@@ -290,7 +291,6 @@ def _heygen_headers():
             f"Nessun avatar trovato per group_id={group_id}"
         )
 
-    # 🔐 RISOLUZIONE ROBUSTA AVATAR ID (copre TUTTI i casi HeyGen)
     avatar_id = (
         data[0].get("avatar_id")
         or data[0].get("id")
