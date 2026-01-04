@@ -312,36 +312,46 @@ def _ensure_avatar(aid: Optional[str]) -> str:
         raise HTTPException(500, "HEYGEN_AVATAR_ID mancante")
     return aid
 
-def heygen_submit_text(script_text: str, avatar_id: str, voice_id: str):
-    # 🔁 Se arriva un group_id (32 char hex), lo risolviamo
-    if len(avatar_id) == 32:
-        avatar_id = heygen_get_avatar_id_from_group(avatar_id)
+def heygen_submit_text(script_text: str,
+                       avatar_id: Optional[str],
+                       voice_id: Optional[str] = None) -> str:
 
-    url = "https://api.heygen.com/v2/video/generate"
-    headers = _heygen_headers()
+    if not HEYGEN_KEY:
+        raise HTTPException(500, "HEYGEN_API_KEY mancante")
 
     payload = {
-        "video_inputs": [{
-            "character": {
-                "type": "avatar",
-                "avatar_id": avatar_id
-            },
-            "voice": {
-                "type": "text",
-                "voice_id": voice_id,
-                "input_text": script_text
-            }
-        }],
-        "aspect_ratio": "9:16",
-        "resolution": "720p"
+        "script": {
+            "type": "text",
+            "input": script_text
+        }
     }
 
-    r = requests.post(url, json=payload, headers=headers, timeout=60)
+    if avatar_id:
+        payload["avatar_id"] = avatar_id
+
+    if voice_id:
+        payload["voice_id"] = voice_id
+
+    r = requests.post(
+        "https://api.heygen.com/v2/video/generate",
+        headers=_heygen_headers(),
+        json=payload,
+        timeout=60
+    )
 
     if r.status_code != 200:
-        raise Exception(f"HeyGen error {r.status_code}: {r.text}")
+        raise HTTPException(
+            r.status_code,
+            f"HeyGen error: {r.text}"
+        )
 
-    return r.json()["data"]["video_id"]
+    data = r.json().get("data") or {}
+    video_id = data.get("video_id") or data.get("id")
+
+    if not video_id:
+        raise HTTPException(500, f"HeyGen risposta senza video_id: {r.text}")
+
+    return video_id
 
 def heygen_submit_audio(audio_url: str,
                         avatar_id: Optional[str] = None) -> str:
