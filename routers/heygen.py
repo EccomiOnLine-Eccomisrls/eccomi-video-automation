@@ -34,7 +34,7 @@ def create_talking_photo(body: CreateTalkingPhotoBody):
         raise HTTPException(500, "HEYGEN_API_KEY mancante")
 
     r = requests.post(
-        f"{HEYGEN_BASE}/talking_photo",
+        f"{HEYGEN_BASE}/talking-photo",
         headers={
             "X-Api-Key": HEYGEN_API_KEY,
             "Content-Type": "application/json"
