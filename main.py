@@ -263,8 +263,8 @@ def _heygen_headers():
         "X-Api-Key": HEYGEN_KEY,
         "Content-Type": "application/json",
     }
-    
-    def heygen_get_avatar_id_from_group(group_id: str) -> str:
+
+def heygen_get_avatar_id_from_group(group_id: str) -> str:
     if not group_id:
         raise HTTPException(400, "group_id mancante")
 
