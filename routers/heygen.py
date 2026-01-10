@@ -12,10 +12,14 @@ router = APIRouter()
 HEYGEN_API_KEY = os.getenv("HEYGEN_API_KEY")
 HEYGEN_BASE = "https://api.heygen.com/v2"
 
-# Avatar e voce (quelli che hai verificato funzionanti)
-AVATAR_ID = "bc09ef5d3e8641699e451c77ebc9054a"
+# ✅ AVATAR API-SAFE (ORA)
+AVATAR_ID = "alex"
+AVATAR_STYLE = "normal"
+
+# 🔊 Voce testata
 VOICE_ID = "1753e5984bca4125a3e727d5d5e07ee2"
 
+# 🔁 Callback asincrono EVS
 CALLBACK_URL = "https://eccomi-video-automation.onrender.com/api/evs/heygen/webhook"
 
 if not HEYGEN_API_KEY:
@@ -28,7 +32,6 @@ if not HEYGEN_API_KEY:
 class GenerateAvatarVideoBody(BaseModel):
     text: str
 
-
 # ======================================================
 # GENERATE AVATAR VIDEO
 # ======================================================
@@ -36,7 +39,7 @@ class GenerateAvatarVideoBody(BaseModel):
 @router.post("/api/evs/heygen/avatar")
 def generate_avatar_video(body: GenerateAvatarVideoBody):
     if not HEYGEN_API_KEY:
-        raise HTTPException(status_code=500, detail="HEYGEN_API_KEY mancante")
+        raise HTTPException(500, "HEYGEN_API_KEY mancante")
 
     payload = {
         "video_inputs": [
@@ -44,7 +47,7 @@ def generate_avatar_video(body: GenerateAvatarVideoBody):
                 "character": {
                     "type": "avatar",
                     "avatar_id": AVATAR_ID,
-                    "avatar_style": "normal"
+                    "avatar_style": AVATAR_STYLE
                 },
                 "voice": {
                     "type": "text",
@@ -59,8 +62,6 @@ def generate_avatar_video(body: GenerateAvatarVideoBody):
         ],
         "aspect_ratio": "9:16",
         "resolution": "720p",
-
-        # 🔥 CALLBACK ASINCRONO
         "callback_url": CALLBACK_URL
     }
 
@@ -76,23 +77,16 @@ def generate_avatar_video(body: GenerateAvatarVideoBody):
     )
 
     if r.status_code != 200:
-        raise HTTPException(
-            status_code=500,
-            detail=f"HeyGen generate error: {r.text}"
-        )
+        raise HTTPException(500, f"HeyGen generate error: {r.text}")
 
     return r.json()
 
-
 # ======================================================
-# WEBHOOK HEYGEN (CALLBACK)
+# WEBHOOK HEYGEN
 # ======================================================
 
 @router.post("/api/evs/heygen/webhook")
 async def heygen_webhook(request: Request):
-    """
-    Riceve eventi automatici da HeyGen
-    """
     payload = await request.json()
 
     print("🎬 WEBHOOK HEYGEN RICEVUTO")
@@ -102,19 +96,14 @@ async def heygen_webhook(request: Request):
     data = payload.get("data", {})
 
     if event_type == "video.completed":
-        video_id = data.get("video_id")
-        video_url = data.get("video_url")
-        thumbnail_url = data.get("thumbnail_url")
-
         print("✅ VIDEO COMPLETATO")
-        print("ID:", video_id)
-        print("URL:", video_url)
+        print("ID:", data.get("video_id"))
+        print("URL:", data.get("video_url"))
 
-        # TODO:
-        # - salva su DB
-        # - associa a ordine Shopify
-        # - invia WhatsApp / Email
-        # - abilita download cliente
+        # QUI EVS FA LA MAGIA
+        # - associa ordine
+        # - notifica cliente
+        # - abilita download
 
     elif event_type == "video.failed":
         print("❌ VIDEO FALLITO")
