@@ -5,41 +5,28 @@ import os
 
 router = APIRouter()
 
-# ======================================================
-# CONFIG
-# ======================================================
-
-HEYGEN_API_KEY = os.getenv("HEYGEN_API_KEY")
 HEYGEN_BASE = "https://api.heygen.com/v2"
-
-# ✅ Avatar pubblico API-safe
-AVATAR_ID = "alex"
-AVATAR_STYLE = "normal"
-
-# 🔊 Voice testata
-VOICE_ID = "1753e5984bca4125a3e727d5d5e07ee2"
-
-# 🔁 Webhook callback
 CALLBACK_URL = "https://eccomi-video-automation.onrender.com/api/evs/heygen/webhook"
 
-if not HEYGEN_API_KEY:
-    print("⚠️ HEYGEN_API_KEY mancante")
+AVATAR_ID = "alex"
+AVATAR_STYLE = "normal"
+VOICE_ID = "1753e5984bca4125a3e727d5d5e07ee2"
 
-# ======================================================
-# MODELS
-# ======================================================
 
 class GenerateAvatarVideoBody(BaseModel):
     text: str
 
-# ======================================================
-# GENERATE AVATAR VIDEO
-# ======================================================
 
 @router.post("/api/evs/heygen/avatar")
 def generate_avatar_video(body: GenerateAvatarVideoBody):
-    if not HEYGEN_API_KEY:
-        raise HTTPException(status_code=500, detail="HEYGEN_API_KEY mancante")
+
+    # ✅ LEGGI ENV QUI, NON A LIVELLO GLOBALE
+    heygen_api_key = os.getenv("HEYGEN_API_KEY")
+
+    print("HEYGEN_API_KEY runtime =", bool(heygen_api_key))
+
+    if not heygen_api_key:
+        raise HTTPException(500, "HEYGEN_API_KEY mancante")
 
     payload = {
         "video_inputs": [
@@ -65,10 +52,10 @@ def generate_avatar_video(body: GenerateAvatarVideoBody):
         "callback_url": CALLBACK_URL
     }
 
-    response = requests.post(
+    r = requests.post(
         f"{HEYGEN_BASE}/video/generate",
         headers={
-            "X-Api-Key": HEYGEN_API_KEY,
+            "X-Api-Key": heygen_api_key,
             "Content-Type": "application/json",
             "Accept": "application/json"
         },
@@ -76,40 +63,14 @@ def generate_avatar_video(body: GenerateAvatarVideoBody):
         timeout=60
     )
 
-    if response.status_code != 200:
-        raise HTTPException(
-            status_code=500,
-            detail=f"HeyGen generate error: {response.text}"
-        )
+    if r.status_code != 200:
+        raise HTTPException(500, f"HeyGen generate error: {r.text}")
 
-    return response.json()
+    return r.json()
 
-# ======================================================
-# WEBHOOK HEYGEN
-# ======================================================
 
 @router.post("/api/evs/heygen/webhook")
 async def heygen_webhook(request: Request):
     payload = await request.json()
-
-    print("🎬 WEBHOOK HEYGEN RICEVUTO")
-    print(payload)
-
-    event_type = payload.get("event_type")
-    data = payload.get("data", {})
-
-    if event_type == "video.completed":
-        print("✅ VIDEO COMPLETATO")
-        print("ID:", data.get("video_id"))
-        print("URL:", data.get("video_url"))
-
-        # TODO:
-        # - associa ordine Shopify
-        # - notifica cliente
-        # - abilita download
-
-    elif event_type == "video.failed":
-        print("❌ VIDEO FALLITO")
-        print(data)
-
+    print("🎬 WEBHOOK HEYGEN:", payload)
     return {"status": "ok"}
