@@ -38,15 +38,18 @@ def generate_video(body: GenerateVideoBody):
         raise HTTPException(500, "HEYGEN_API_KEY mancante")
 
     # 1️⃣ CREA TALKING PHOTO
-    tp = requests.post(
-        f"{HEYGEN_BASE}/talking-photo",
-        headers={
-            "Authorization": f"Bearer {HEYGEN_API_KEY}",
-            "Content-Type": "application/json"
-        },
-        json={"image_url": body.image_url},
-        timeout=30
-    )
+tp = requests.post(
+    "https://api.heygen.com/v1/talking_photo",
+    headers={
+        "Authorization": f"Bearer {HEYGEN_API_KEY}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    },
+    json={
+        "image_url": body.image_url
+    },
+    timeout=30
+)
 
     if tp.status_code != 200:
         raise HTTPException(500, f"Talking photo error: {tp.text}")
