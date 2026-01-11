@@ -82,3 +82,17 @@ async def create_avatar(payload: dict):
         logging.error(str(e))
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/api/evs/heygen/list-avatars")
+async def list_avatars():
+    try:
+        heygen_api_key = os.getenv("HEYGEN_API_KEY")
+        r = requests.get(
+            f"{HEYGEN_BASE}/avatar/list",
+            headers={"X-Api-Key": heygen_api_key},
+            timeout=30
+        )
+        return r.json()
+    except Exception as e:
+        return {"error": str(e)}
+
