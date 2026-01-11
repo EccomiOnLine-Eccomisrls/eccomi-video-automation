@@ -325,26 +325,29 @@ def heygen_submit_text(
     if not HEYGEN_KEY:
         raise HTTPException(500, "HEYGEN_API_KEY mancante")
 
-    if not avatar_id:
-        raise HTTPException(400, "avatar_id mancante")
+    # Forza un avatar di default se non passato
+    aid = (avatar_id or HEYGEN_AVATAR or "josh_lite_20230714").strip()
 
     payload = {
         "video_inputs": [
             {
                 "character": {
                     "type": "avatar",
-                    "avatar_id": avatar_id
+                    "avatar_id": aid
                 },
                 "voice": {
                     "type": "text",
-                    "voice_id": voice_id or "it_male_energetic",
-                    "input_text": script_text
+                    "input_text": script_text,
+                    "voice_id": voice_id or "2d5b0e6cf0304934847e9262f3395995" # ID voce italiana standard
                 }
             }
         ],
+        "dimension": {"width": 720, "height": 1280}, # Formato 9:16 corretto per V2
         "aspect_ratio": "9:16",
-        "resolution": "720p"
+        "test": True # Imposta a False quando sei pronto a consumare crediti
     }
+
+    print(f"[DEBUG] Invio a HeyGen: Avatar={aid}, Voice={voice_id}")
 
     r = requests.post(
         "https://api.heygen.com/v2/video/generate",
@@ -354,13 +357,14 @@ def heygen_submit_text(
     )
 
     if r.status_code != 200:
+        print(f"[ERROR] HeyGen Response: {r.text}") # Questo ti aiuterà a vedere l'errore reale nei log
         raise HTTPException(
             r.status_code,
             f"HeyGen error: {r.text}"
         )
 
-    data = r.json().get("data") or {}
-    video_id = data.get("video_id")
+    res_json = r.json()
+    video_id = res_json.get("data", {}).get("video_id")
 
     if not video_id:
         raise HTTPException(500, f"HeyGen risposta senza video_id: {r.text}")
