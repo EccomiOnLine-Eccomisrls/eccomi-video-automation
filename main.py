@@ -316,27 +316,15 @@ def _ensure_avatar(aid: Optional[str]) -> str:
         raise HTTPException(500, "HEYGEN_AVATAR_ID mancante")
     return aid
 
-def heygen_submit_text(
-    script_text: str,
-    avatar_id: Optional[str],
-    voice_id: Optional[str] = None
-) -> str:
-    """
-    Invia una richiesta a HeyGen V2 per generare un video da testo.
-    """
-    if not HEYGEN_KEY:
-        raise HTTPException(500, "HEYGEN_API_KEY mancante nel server")
-
-    # 1. Pulizia e validazione dell'Avatar ID
-    # Se avatar_id è nullo, usa la variabile d'ambiente. Se è "alex" o vuoto, usa un fallback sicuro.
-    aid = (avatar_id or HEYGEN_AVATAR or "").strip()
-    if not aid or aid.lower() == "alex":
-        aid = "josh_lite_20230714" 
-        print(f"[HEYGEN] Avatar '{avatar_id}' non valido, uso fallback: {aid}")
-
-    # 2. Configurazione della voce (ID esadecimale per stabilità su V2)
-    # Default: "it-IT-ElsaNeural" (Italiano)
-    final_voice_id = voice_id or "2d5b0e6cf0304934847e9262f3395995"
+def heygen_submit_text(script_text: str, avatar_id: Optional[str], voice_id: Optional[str] = None) -> str:
+    # 1. Recupera l'API KEY
+    api_key = os.getenv("HEYGEN_API_KEY")
+    
+    # 2. Gestione ID Avatar: 
+    # Prende quello del comando, altrimenti quello di Render, altrimenti il fallback sicuro.
+    aid = avatar_id or os.getenv("HEYGEN_AVATAR_ID")
+    if not aid or aid == "alex":
+        aid = "josh_lite_20230714"
 
     # 3. Costruzione del Payload (Struttura Nidificata V2)
     payload = {
