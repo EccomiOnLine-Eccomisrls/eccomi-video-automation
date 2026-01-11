@@ -88,17 +88,24 @@ async def list_avatars():
     try:
         heygen_api_key = os.getenv("HEYGEN_API_KEY")
         if not heygen_api_key:
-            return {"error": "API KEY mancante su Render!"}
+            return {"error": "HEYGEN_API_KEY non trovata su Render"}
 
+        # Proviamo l'endpoint corretto per la V2
         r = requests.get(
-            f"{HEYGEN_BASE}/avatar/list",
-            headers={"X-Api-Key": heygen_api_key},
+            "https://api.heygen.com/v2/avatars", # Rimosso /list e aggiunto s
+            headers={
+                "X-Api-Key": heygen_api_key,
+                "Accept": "application/json"
+            },
             timeout=30
         )
         
-        # Se HeyGen risponde con un errore (es. 401), leggiamolo come testo
         if r.status_code != 200:
-            return {"status": r.status_code, "msg": r.text}
+            return {
+                "status": r.status_code, 
+                "error_from_heygen": r.text,
+                "tried_url": "https://api.heygen.com/v2/avatars"
+            }
             
         return r.json()
     except Exception as e:
