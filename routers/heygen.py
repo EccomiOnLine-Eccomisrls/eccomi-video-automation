@@ -1,76 +1,65 @@
-from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+import logging
+import traceback
 import requests
 import os
+from fastapi import HTTPException
 
-router = APIRouter()
-
+HEYGEN_API_KEY = os.getenv("HEYGEN_API_KEY")
 HEYGEN_BASE = "https://api.heygen.com/v2"
-CALLBACK_URL = "https://eccomi-video-automation.onrender.com/api/evs/heygen/webhook"
 
-AVATAR_ID = "alex"
-AVATAR_STYLE = "normal"
-VOICE_ID = "1753e5984bca4125a3e727d5d5e07ee2"
+@app.post("/api/evs/heygen/avatar")
+async def create_avatar(payload: dict):
+    try:
+        logging.info("📩 Payload ricevuto")
+        logging.info(payload)
 
+        if not HEYGEN_API_KEY:
+            raise Exception("HEYGEN_API_KEY non presente in ambiente")
 
-class GenerateAvatarVideoBody(BaseModel):
-    text: str
+        text = payload.get("text")
+        if not text:
+            raise Exception("Campo 'text' mancante nel payload")
 
-
-@router.post("/api/evs/heygen/avatar")
-def generate_avatar_video(body: GenerateAvatarVideoBody):
-
-    # ✅ LEGGI ENV QUI, NON A LIVELLO GLOBALE
-    heygen_api_key = os.getenv("HEYGEN_API_KEY")
-
-    print("HEYGEN_API_KEY runtime =", bool(heygen_api_key))
-
-    if not heygen_api_key:
-        raise HTTPException(500, "HEYGEN_API_KEY mancante")
-
-    payload = {
-        "video_inputs": [
-            {
-                "character": {
-                    "type": "avatar",
-                    "avatar_id": AVATAR_ID,
-                    "avatar_style": AVATAR_STYLE
-                },
-                "voice": {
-                    "type": "text",
-                    "voice_id": VOICE_ID,
-                    "input_text": body.text
-                },
-                "background": {
-                    "type": "color",
-                    "value": "#FFFFFF"
+        body = {
+            "video_inputs": [
+                {
+                    "character": {
+                        "type": "avatar",
+                        "avatar_id": "alex",
+                        "avatar_style": "normal"
+                    },
+                    "voice": {
+                        "type": "text",
+                        "voice_id": "1753e5984bca4125a3e727d5d5e07ee2",
+                        "input_text": text
+                    }
                 }
-            }
-        ],
-        "aspect_ratio": "9:16",
-        "resolution": "720p",
-        "callback_url": CALLBACK_URL
-    }
+            ],
+            "aspect_ratio": "9:16",
+            "resolution": "720p"
+        }
 
-    r = requests.post(
-        f"{HEYGEN_BASE}/video/generate",
-        headers={
-            "X-Api-Key": heygen_api_key,
-            "Content-Type": "application/json",
-            "Accept": "application/json"
-        },
-        json=payload,
-        timeout=60
-    )
+        r = requests.post(
+            f"{HEYGEN_BASE}/video/generate",
+            headers={
+                "X-Api-Key": HEYGEN_API_KEY,
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            },
+            json=body,
+            timeout=60
+        )
 
-    if r.status_code != 200:
-        raise HTTPException(500, f"HeyGen generate error: {r.text}")
+        logging.info(f"📡 HeyGen status: {r.status_code}")
+        logging.info(r.text)
 
-    return r.json()
+        if r.status_code != 200:
+            raise Exception(f"HeyGen error: {r.text}")
 
+        return r.json()
 
-@router.post("/api/evs/heygen/webhook")
-async def heygen_webhook(request: Request):
-    payload = await request.json()
-    print("🎬 WEBHOOK HEYGEN:", payload)
-    return {"status": "ok"}
+    except Exception as e:
+        logging.error("❌ ERRORE CRITICO EVS")
+        logging.error(str(e))
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
