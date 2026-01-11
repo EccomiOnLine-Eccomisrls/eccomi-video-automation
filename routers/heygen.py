@@ -2,18 +2,20 @@ import logging
 import traceback
 import requests
 import os
-from fastapi import HTTPException
+from fastapi import APIRouter, HTTPException
 
-HEYGEN_API_KEY = os.getenv("HEYGEN_API_KEY")
+router = APIRouter()
+
 HEYGEN_BASE = "https://api.heygen.com/v2"
 
-@app.post("/api/evs/heygen/avatar")
+@router.post("/api/evs/heygen/avatar")
 async def create_avatar(payload: dict):
     try:
         logging.info("📩 Payload ricevuto")
         logging.info(payload)
 
-        if not HEYGEN_API_KEY:
+        heygen_api_key = os.getenv("HEYGEN_API_KEY")
+        if not heygen_api_key:
             raise Exception("HEYGEN_API_KEY non presente in ambiente")
 
         text = payload.get("text")
@@ -42,7 +44,7 @@ async def create_avatar(payload: dict):
         r = requests.post(
             f"{HEYGEN_BASE}/video/generate",
             headers={
-                "X-Api-Key": HEYGEN_API_KEY,
+                "X-Api-Key": heygen_api_key,
                 "Content-Type": "application/json",
                 "Accept": "application/json"
             },
