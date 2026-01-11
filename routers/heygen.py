@@ -87,12 +87,19 @@ async def create_avatar(payload: dict):
 async def list_avatars():
     try:
         heygen_api_key = os.getenv("HEYGEN_API_KEY")
+        if not heygen_api_key:
+            return {"error": "API KEY mancante su Render!"}
+
         r = requests.get(
             f"{HEYGEN_BASE}/avatar/list",
             headers={"X-Api-Key": heygen_api_key},
             timeout=30
         )
+        
+        # Se HeyGen risponde con un errore (es. 401), leggiamolo come testo
+        if r.status_code != 200:
+            return {"status": r.status_code, "msg": r.text}
+            
         return r.json()
     except Exception as e:
         return {"error": str(e)}
-
