@@ -321,13 +321,24 @@ def heygen_submit_text(
     avatar_id: Optional[str],
     voice_id: Optional[str] = None
 ) -> str:
-
+    """
+    Invia una richiesta a HeyGen V2 per generare un video da testo.
+    """
     if not HEYGEN_KEY:
-        raise HTTPException(500, "HEYGEN_API_KEY mancante")
+        raise HTTPException(500, "HEYGEN_API_KEY mancante nel server")
 
-    # Forza un avatar di default se non passato
-    aid = (avatar_id or HEYGEN_AVATAR or "josh_lite_20230714").strip()
+    # 1. Pulizia e validazione dell'Avatar ID
+    # Se avatar_id è nullo, usa la variabile d'ambiente. Se è "alex" o vuoto, usa un fallback sicuro.
+    aid = (avatar_id or HEYGEN_AVATAR or "").strip()
+    if not aid or aid.lower() == "alex":
+        aid = "josh_lite_20230714" 
+        print(f"[HEYGEN] Avatar '{avatar_id}' non valido, uso fallback: {aid}")
 
+    # 2. Configurazione della voce (ID esadecimale per stabilità su V2)
+    # Default: "it-IT-ElsaNeural" (Italiano)
+    final_voice_id = voice_id or "2d5b0e6cf0304934847e9262f3395995"
+
+    # 3. Costruzione del Payload (Struttura Nidificata V2)
     payload = {
         "video_inputs": [
             {
@@ -338,38 +349,46 @@ def heygen_submit_text(
                 "voice": {
                     "type": "text",
                     "input_text": script_text,
-                    "voice_id": voice_id or "2d5b0e6cf0304934847e9262f3395995" # ID voce italiana standard
+                    "voice_id": final_voice_id
                 }
             }
         ],
-        "dimension": {"width": 720, "height": 1280}, # Formato 9:16 corretto per V2
+        "dimension": {"width": 720, "height": 1280},
         "aspect_ratio": "9:16",
-        "test": True # Imposta a False quando sei pronto a consumare crediti
+        "test": True  # Imposta a False per produrre video reali (consuma crediti)
     }
 
-    print(f"[DEBUG] Invio a HeyGen: Avatar={aid}, Voice={voice_id}")
+    print(f"[DEBUG] Invio a HeyGen: Avatar={aid}, Voice={final_voice_id}")
 
-    r = requests.post(
-        "https://api.heygen.com/v2/video/generate",
-        headers=_heygen_headers(),
-        json=payload,
-        timeout=60
-    )
-
-    if r.status_code != 200:
-        print(f"[ERROR] HeyGen Response: {r.text}") # Questo ti aiuterà a vedere l'errore reale nei log
-        raise HTTPException(
-            r.status_code,
-            f"HeyGen error: {r.text}"
+    try:
+        r = requests.post(
+            "https://api.heygen.com/v2/video/generate",
+            headers=_heygen_headers(),
+            json=payload,
+            timeout=60
         )
+        
+        # Log dell'errore specifico se la risposta non è 200
+        if r.status_code != 200:
+            print(f"❌ ERRORE HEYGEN API: {r.status_code} - {r.text}")
+            raise HTTPException(
+                r.status_code, 
+                f"HeyGen API Error: {r.json().get('error', {}).get('message', r.text)}"
+            )
 
-    res_json = r.json()
-    video_id = res_json.get("data", {}).get("video_id")
+        data = r.json().get("data") or {}
+        video_id = data.get("video_id")
 
-    if not video_id:
-        raise HTTPException(500, f"HeyGen risposta senza video_id: {r.text}")
+        if not video_id:
+            raise HTTPException(500, f"Risposta HeyGen senza video_id: {r.text}")
 
-    return video_id
+        print(f"✅ Video creato con successo! ID: {video_id}")
+        return video_id
+
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Errore di connessione HeyGen: {e}")
+        raise HTTPException(503, "Impossibile contattare HeyGen")
+
 
 def heygen_submit_audio(audio_url: str,
                         avatar_id: Optional[str] = None) -> str:
