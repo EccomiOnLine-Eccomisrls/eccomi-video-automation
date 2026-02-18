@@ -1,961 +1,293 @@
 import os, hmac, hashlib, base64, time, json, requests, uuid
 from typing import Optional, Dict, Any, List
 from datetime import datetime
-from threading import Lock
 from pathlib import Path
 
-from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Query, Depends, Header, UploadFile, File, Form
-from routers.heygen import router as heygen_router
+from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, HTMLResponse, JSONResponse
-from pydantic import BaseModel
-import resend
+from fastapi.responses import Response, JSONResponse
 import mimetypes
+
+from supabase import create_client, Client
 
 # =========================
 # ENV & GLOBALS
 # =========================
-DID_KEY = os.getenv("D_ID_API_KEY", "")
-RESEND_KEY = os.getenv("RESEND_API_KEY", "")
-FROM_EMAIL = os.getenv("FROM_EMAIL", "Eccomi Video <info@eccomionline.com>")
+# Database & GPU
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+RUNPOD_API_KEY = os.getenv("RUNPOD_API_KEY", "")
+RUNPOD_ENDPOINT_ID = os.getenv("RUNPOD_ENDPOINT_ID", "")
 
-HEYGEN_KEY = os.getenv("HEYGEN_API_KEY", "")
-HEYGEN_AVATAR = os.getenv("HEYGEN_AVATAR_ID", "")
-HEYGEN_VOICE_ID = os.getenv("HEYGEN_VOICE_ID", "it_male_energetic")
-
-print("DEBUG HEYGEN_KEY =", bool(HEYGEN_KEY))
-print("DEBUG globals has HEYGEN_API_KEY =", "HEYGEN_API_KEY" in globals())
-
-AVATAR_ID = HEYGEN_AVATAR
-VOICE_ID = HEYGEN_VOICE_ID
-
-ELEVEN_KEY = os.getenv("ELEVENLABS_API_KEY", "")
-ELEVEN_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
-
-ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
-
+# Shopify
 SHOP_DOMAIN = os.getenv("SHOP_DOMAIN", "")
 SHOP_ADMIN_TOKEN = os.getenv("SHOP_ADMIN_TOKEN", "")
-SHOPIFY_API_VER = os.getenv("SHOPIFY_API_VER", "2025-10")
-
-DATA_FILE = os.getenv("DATA_FILE", "data/jobs.json")
-EVS_STORAGE_DIR = os.getenv("EVS_STORAGE_DIR", "data/evs_orders")
-
-PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "")
 SHOPIFY_WEBHOOK_SECRET = os.getenv("SHOPIFY_WEBHOOK_SECRET", "")
 VERIFY_SHOPIFY_HMAC = os.getenv("VERIFY_SHOPIFY_HMAC", "false").lower() == "true"
+
+# Storage Locale (Cache ordini)
+EVS_STORAGE_DIR = os.getenv("EVS_STORAGE_DIR", "data/evs_orders")
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "")  # es: https://eccomi-video-automation.onrender.com
 
 EVS_STORAGE = Path(EVS_STORAGE_DIR)
 EVS_STORAGE.mkdir(parents=True, exist_ok=True)
 
-if RESEND_KEY:
-    resend.api_key = RESEND_KEY
+# Inizializza Supabase (opzionale)
+supabase: Optional[Client] = None
+if SUPABASE_URL and SUPABASE_KEY:
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("✅ Supabase collegato")
+    except Exception as e:
+        supabase = None
+        print("⚠️ Supabase init error:", e)
 
 # =========================
-# STORAGE
+# UTILS
 # =========================
-JOBS: Dict[str, Dict[str, Any]] = {}
-JOBS_LOCK = Lock()
-
 def _now_iso():
     return datetime.utcnow().isoformat() + "Z"
 
-def _storage_load():
+def _safe_json_load(path: Path) -> Dict[str, Any]:
     try:
-        if os.path.exists(DATA_FILE):
-            with open(DATA_FILE, "r", encoding="utf-8") as f:
-                d = json.load(f)
-            return d if isinstance(d, dict) else {}
-    except Exception as e:
-        print("⚠️ storage load error:", e)
+        if path.exists():
+            return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        pass
     return {}
 
-def _storage_save():
-    try:
-        os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(JOBS, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print("⚠️ storage save error:", e)
-
-def _jobs_upsert(job_id: str, data: dict):
-    if not job_id:
-        return
-    with JOBS_LOCK:
-        base = JOBS.get(job_id, {})
-        base.update(data)
-        base.setdefault("created_at", _now_iso())
-        base["updated_at"] = _now_iso()
-        JOBS[job_id] = base
-        _storage_save()
-
-def _jobs_list():
-    with JOBS_LOCK:
-        return sorted(JOBS.values(), key=lambda x: x.get("updated_at", ""), reverse=True)
-
-JOBS.update(_storage_load())
-
-# =========================
-# APP
-# =========================
-app = FastAPI(title="Eccomi Video Automation", version="2.3")
-
-app.include_router(heygen_router)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["https://www.eccomionline.com", "https://eccomionline.com", "*"],
-    allow_methods=["*"],
-    allow_headers=["*", "Authorization"],
-)
-
-# =========================
-# AUTH
-# =========================
-def require_admin_header(authorization: str = Header(None)):
-    if not ADMIN_TOKEN:
-        raise HTTPException(500, "ADMIN_TOKEN non configurato")
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(401, "Missing Bearer token")
-    token = authorization.split(" ", 1)[1].strip()
-    if token != ADMIN_TOKEN:
-        raise HTTPException(401, "Unauthorized")
-    return True
-
-# =========================
-# MODELS
-# =========================
-class Job(BaseModel):
-    image_url: str
-    script: Optional[str] = None
-    voice: Optional[str] = "ms:it-IT-GiuseppeNeural"
-    audio_url: Optional[str] = None
-    to_email: Optional[str] = None
-    order_name: Optional[str] = None
-
-class HeygenText(BaseModel):
-    script: str
-    avatar_id: Optional[str] = None
-    voice_id: Optional[str] = None
-    to_email: Optional[str] = None
-    order_name: Optional[str] = None
-
-class HeygenAudio(BaseModel):
-    audio_url: str
-    avatar_id: Optional[str] = None
-    to_email: Optional[str] = None
-    order_name: Optional[str] = None
-
-class ManualPhotoReq(BaseModel):
-    image_url: str
-    script: Optional[str] = None
-    audio_url: Optional[str] = None
-    voice: Optional[str] = "ms:it-IT-GiuseppeNeural"
-    to_email: Optional[str] = None
-    order_name: Optional[str] = "ManualOrder"
-
-class ManualAvatarTextReq(BaseModel):
-    script: str
-    avatar_id: Optional[str] = None
-    voice_id: Optional[str] = None
-    to_email: Optional[str] = None
-    order_name: Optional[str] = "ManualOrder"
-
-class ManualAvatarAudioReq(BaseModel):
-    audio_url: str
-    avatar_id: Optional[str] = None
-    to_email: Optional[str] = None
-    order_name: Optional[str] = "ManualOrder"
-
-# =========================
-# EMAIL
-# =========================
-def send_email(to_email: str, subject: str, html: str):
-    if not RESEND_KEY:
-        print("⚠️ RESEND_API_KEY mancante: salto invio email")
-        return
-    try:
-        r = resend.Emails.send({"from": FROM_EMAIL, "to": to_email, "subject": subject, "html": html})
-        print("✅ Email inviata:", r)
-    except Exception as e:
-        print("❌ ERRORE invio email:", e)
-
-# =========================
-# D-ID
-# =========================
-def did_headers():
-    if not DID_KEY:
-        raise HTTPException(500, "D_ID_API_KEY mancante")
-    token = base64.b64encode((DID_KEY + ":").encode("utf-8")).decode("utf-8")
-    return {"Authorization": f"Basic {token}", "Content-Type": "application/json"}
-
-def make_did_payload(job: Job) -> Dict[str, Any]:
-    payload = {"source_url": job.image_url, "config": {"stitch": True}}
-    if job.audio_url:
-        payload["audio_url"] = job.audio_url
-    else:
-        if (job.voice or "").startswith("eleven:"):
-            provider = {"type": "elevenlabs", "voice_id": job.voice.split(":", 1)[1]}
-        else:
-            voice_id = job.voice.split(":", 1)[1] if ":" in (job.voice or "") else "it-IT-GiuseppeNeural"
-            provider = {"type": "microsoft", "voice_id": voice_id}
-        payload["script"] = {
-            "type": "text",
-            "input": job.script or "Ciao! Il tuo video è pronto.",
-            "provider": provider,
-        }
-    return payload
-
-def did_create_talk(job: Job) -> Dict[str, Any]:
-    r = requests.post("https://api.d-id.com/talks", headers=did_headers(), json=make_did_payload(job), timeout=90)
-    if r.status_code not in (200, 201):
-        raise HTTPException(r.status_code, f"D-ID create error: {r.text}")
-    return r.json()
-
-def did_status(talk_id: str) -> Dict[str, Any]:
-    r = requests.get(f"https://api.d-id.com/talks/{talk_id}", headers=did_headers(), timeout=60)
-    if r.status_code != 200:
-        raise HTTPException(r.status_code, f"D-ID status error: {r.text}")
-    return r.json()
-
-def poll_and_notify_did(job: Job, talk_id: str, max_wait_sec: int = 600, every_sec: int = 5):
-    _jobs_upsert(talk_id, {
-        "id": talk_id,
-        "provider": "d-id",
-        "status": "queued",
-        "to_email": job.to_email,
-        "order_name": job.order_name,
-    })
-    waited = 0
-    while waited <= max_wait_sec:
-        s = did_status(talk_id)
-        st = s.get("status")
-        video_url = s.get("result_url")
-        _jobs_upsert(talk_id, {"status": st or "", "video_url": video_url, "raw": s})
-        if st == "done" and video_url:
-            if job.to_email:
-                html = (
-                    "<p>Ciao! 👋</p><p>Il tuo <b>Video Parlante AI</b> è pronto.</p>"
-                    f'<p><a href="{video_url}" target="_blank">Scarica il video</a></p>'
-                )
-                send_email(job.to_email, f"Video AI pronto — Ordine {job.order_name or ''}", html)
-            return
-        if st in ("error", "failed"):
-            if job.to_email:
-                send_email(
-                    job.to_email,
-                    f"Problema con il tuo Video AI — Ordine {job.order_name or ''}",
-                    "<p>Si è verificato un errore. Ti contatteremo a breve.</p>",
-                )
-            return
-        time.sleep(every_sec)
-        waited += every_sec
-    if job.to_email:
-        send_email(
-            job.to_email,
-            f"Stiamo completando il tuo Video AI — Ordine {job.order_name or ''}",
-            "<p>La generazione richiede più tempo del previsto. Ti avviseremo appena pronto.</p>",
-        )
-
-# =========================
-# HEYGEN
-# =========================
-def _heygen_headers():
-    if not HEYGEN_KEY:
-        raise HTTPException(500, "HEYGEN_KEY mancante")
-    return {
-        "X-Api-Key": HEYGEN_KEY,
-        "Content-Type": "application/json",
-    }
-
-def heygen_get_avatar_id_from_group(group_id: str) -> str:
-    if not group_id:
-        raise HTTPException(400, "group_id mancante")
-
-    url = f"https://api.heygen.com/v2/avatars?group_id={group_id}"
-
-    r = requests.get(
-        url,
-        headers=_heygen_headers(),
-        timeout=30
-    )
-
-    if r.status_code != 200:
-        raise HTTPException(
-            r.status_code,
-            f"HeyGen avatars list error: {r.text}"
-        )
-
-    payload = r.json()
-    data = payload.get("data") or []
-
-    if not data:
-        raise HTTPException(
-            404,
-            f"Nessun avatar trovato per group_id={group_id}"
-        )
-
-    avatar_id = (
-        data[0].get("avatar_id")
-        or data[0].get("id")
-        or (data[0].get("avatar") or {}).get("avatar_id")
-    )
-
-    if not avatar_id:
-        raise HTTPException(
-            500,
-            f"Risposta HeyGen senza avatar_id valido: {data[0]}"
-        )
-
-    print(f"[HEYGEN] avatar_id risolto: {avatar_id}")
-    return avatar_id
-    
-def _ensure_avatar(aid: Optional[str]) -> str:
-    aid = (aid or "").strip() or (HEYGEN_AVATAR or "").strip()
-    if not aid:
-        raise HTTPException(500, "HEYGEN_AVATAR_ID mancante")
-    return aid
-
-def heygen_submit_text(script_text: str, avatar_id: Optional[str], voice_id: Optional[str] = None) -> str:
-    # 1. Recupera l'API KEY
-    api_key = os.getenv("HEYGEN_API_KEY")
-    
-    # 2. Gestione ID Avatar: 
-    # Prende quello del comando, altrimenti quello di Render, altrimenti il fallback sicuro.
-    aid = avatar_id or os.getenv("HEYGEN_AVATAR_ID")
-    if not aid or aid == "alex":
-        aid = "josh_lite_20230714"
-
-    # 3. Costruzione del Payload (Struttura Nidificata V2)
-    payload = {
-        "video_inputs": [
-            {
-                "character": {
-                    "type": "avatar",
-                    "avatar_id": aid
-                },
-                "voice": {
-                    "type": "text",
-                    "input_text": script_text,
-                    "voice_id": final_voice_id
-                }
-            }
-        ],
-        "dimension": {"width": 720, "height": 1280},
-        "aspect_ratio": "9:16",
-        "test": True  # Imposta a False per produrre video reali (consuma crediti)
-    }
-
-    print(f"[DEBUG] Invio a HeyGen: Avatar={aid}, Voice={final_voice_id}")
-
-    try:
-        r = requests.post(
-            "https://api.heygen.com/v2/video/generate",
-            headers=_heygen_headers(),
-            json=payload,
-            timeout=60
-        )
-        
-        # Log dell'errore specifico se la risposta non è 200
-        if r.status_code != 200:
-            print(f"❌ ERRORE HEYGEN API: {r.status_code} - {r.text}")
-            raise HTTPException(
-                r.status_code, 
-                f"HeyGen API Error: {r.json().get('error', {}).get('message', r.text)}"
-            )
-
-        data = r.json().get("data") or {}
-        video_id = data.get("video_id")
-
-        if not video_id:
-            raise HTTPException(500, f"Risposta HeyGen senza video_id: {r.text}")
-
-        print(f"✅ Video creato con successo! ID: {video_id}")
-        return video_id
-
-    except requests.exceptions.RequestException as e:
-        print(f"❌ Errore di connessione HeyGen: {e}")
-        raise HTTPException(503, "Impossibile contattare HeyGen")
-
-
-def heygen_submit_audio(audio_url: str,
-                        avatar_id: Optional[str] = None) -> str:
-    aid = _ensure_avatar(avatar_id)
-
-    video_input: Dict[str, Any] = {
-        "avatar_id": aid,
-        "voice": {
-            "type": "audio",
-            "audio": {
-                "audio_src_url": audio_url,
-            },
-        },
-    }
-
-    payload = {
-        "video_inputs": [video_input],
-        "test": False,
-        "caption": False,
-        "aspect_ratio": "9:16",
-        "resolution": "720p",
-    }
-
-    r = requests.post(
-        "https://api.heygen.com/v2/video/generate",
-        headers=_heygen_headers(),
-        json=payload,
-        timeout=120,
-    )
-    if r.status_code != 200:
-        raise HTTPException(r.status_code, f"HeyGen v2 submit-audio error: {r.text}")
-    data = r.json().get("data", {}) or {}
-    vid = data.get("video_id") or data.get("id")
-    if not vid:
-        raise HTTPException(502, f"HeyGen v2: risposta senza video_id: {r.text}")
-    return vid
-
-def heygen_status(video_id: str) -> Dict[str, Any]:
-    r = requests.get(
-        f"https://api.heygen.com/v2/video/status?video_id={video_id}",
-        headers=_heygen_headers(),
-        timeout=60,
-    )
-    if r.status_code == 200:
-        return r.json()
-    r2 = requests.get(
-        f"https://api.heygen.com/v1/video.status?video_id={video_id}",
-        headers=_heygen_headers(),
-        timeout=60,
-    )
-    if r2.status_code == 200:
-        return r2.json()
-    raise HTTPException(
-        502,
-        f"HeyGen status error: v2={r.status_code} {r.text} | v1={r2.status_code} {r2.text}",
-    )
-
-def poll_and_notify_heygen(video_id: str, to_email: Optional[str], order_name: Optional[str] = None,
-                           every_sec: int = 7, max_wait_sec: int = 1200):
-    _jobs_upsert(video_id, {
-        "id": video_id,
-        "provider": "heygen",
-        "status": "queued",
-        "to_email": to_email,
-        "order_name": order_name,
-    })
-    waited = 0
-    while waited <= max_wait_sec:
-        try:
-            s = heygen_status(video_id)
-        except HTTPException as e:
-            _jobs_upsert(video_id, {"status": f"error:{e.status_code}", "raw": str(e.detail)})
-            time.sleep(every_sec); waited += every_sec
-            continue
-        data = s.get("data") or s
-        status = (data.get("status") or data.get("task_status") or "").lower()
-        video_url = (data.get("video") or {}).get("url") or data.get("video_url")
-        _jobs_upsert(video_id, {"status": status, "video_url": video_url, "raw": s})
-        if status in {"completed", "done", "succeeded"} and video_url:
-            if to_email:
-                html = (
-                    "<p>Ciao! 👋</p><p>Il tuo <b>Video Avatar</b> è pronto.</p>"
-                    f'<p><a href="{video_url}" target="_blank">Scarica il video</a></p>'
-                )
-                send_email(to_email, f"Video Avatar pronto — Ordine {order_name or ''}", html)
-            return
-        if status in {"failed", "error", "canceled"}:
-            if to_email:
-                send_email(
-                    to_email,
-                    f"Problema con il tuo Video Avatar — Ordine {order_name or ''}",
-                    "<p>Si è verificato un errore. Ti contatteremo a breve.</p>",
-                )
-            return
-        time.sleep(every_sec); waited += every_sec
-    if to_email:
-        send_email(
-            to_email,
-            f"Stiamo completando il tuo Video Avatar — Ordine {order_name or ''}",
-            "<p>La generazione richiede più tempo del previsto. Ti avviseremo appena pronto.</p>",
-        )
-
-# =========================
-# META & DIAG
-# =========================
-@app.get("/", tags=["meta"])
-def root():
-    return {
-        "ok": True,
-        "service": "EccomiVideoAutomation",
-        "version": "2.3",
-        "health": "/api/health",
-        "docs": "/docs",
-        "dashboard": "/dashboard",
-    }
-
-@app.get("/favicon.ico", include_in_schema=False)
-def favicon():
-    return Response(status_code=204)
-
-@app.get("/api/health")
-def health():
-    return {"ok": True, "service": "EccomiVideoAutomation", "version": "2.3"}
-
-@app.get("/api/diag/env")
-def diag_env():
-    return {
-        "RESEND_API_KEY": bool(RESEND_KEY),
-        "FROM_EMAIL": FROM_EMAIL,
-        "D_ID_API_KEY": bool(DID_KEY),
-        "HEYGEN_KEY": bool(HEYGEN_KEY),
-        "HEYGEN_AVATAR_ID": bool(HEYGEN_AVATAR),
-        "HEYGEN_VOICE_ID": HEYGEN_VOICE_ID,
-        "ELEVENLABS_API_KEY": bool(ELEVEN_KEY),
-        "ADMIN_TOKEN": bool(ADMIN_TOKEN),
-        "SHOP_DOMAIN": SHOP_DOMAIN,
-        "SHOP_ADMIN_TOKEN": bool(SHOP_ADMIN_TOKEN),
-        "SHOPIFY_WEBHOOK_SECRET": bool(SHOPIFY_WEBHOOK_SECRET),
-        "VERIFY_SHOPIFY_HMAC": VERIFY_SHOPIFY_HMAC,
-        "PUBLIC_BASE_URL": PUBLIC_BASE_URL,
-        "DATA_FILE": DATA_FILE,
-        "EVS_STORAGE_DIR": EVS_STORAGE_DIR,
-    }
-
-# =========================
-# D-ID API
-# =========================
-@app.post("/api/jobs/photo")
-@app.post("/api/jobs")
-def create_job_photo(job: Job, bg: BackgroundTasks):
-    talk = did_create_talk(job)
-    talk_id = talk.get("id")
-    if talk_id:
-        _jobs_upsert(talk_id, {
-            "id": talk_id,
-            "provider": "d-id",
-            "status": "submitted",
-            "to_email": job.to_email,
-            "order_name": job.order_name,
-            "raw": talk,
-        })
-        bg.add_task(poll_and_notify_did, job, talk_id)
-    return {"ok": True, "provider": "d-id", "talk_id": talk_id, "raw": talk}
-
-# =========================
-# HEYGEN API
-# =========================
-@app.post("/api/heygen/submit")
-def heygen_submit_endpoint(body: HeygenText, bg: BackgroundTasks):
-    vid = heygen_submit_text(body.script, body.avatar_id, body.voice_id)
-    _jobs_upsert(vid, {
-        "id": vid,
-        "provider": "heygen",
-        "status": "submitted",
-        "to_email": body.to_email,
-        "order_name": body.order_name,
-    })
-    if body.to_email:
-        bg.add_task(poll_and_notify_heygen, vid, body.to_email, body.order_name)
-    return {"ok": True, "provider": "heygen", "video_id": vid}
-
-@app.post("/api/heygen/submit-audio")
-def heygen_submit_audio_endpoint(body: HeygenAudio, bg: BackgroundTasks):
-    vid = heygen_submit_audio(body.audio_url, body.avatar_id)
-    _jobs_upsert(vid, {
-        "id": vid,
-        "provider": "heygen",
-        "status": "submitted",
-        "to_email": body.to_email,
-        "order_name": body.order_name,
-    })
-    if body.to_email:
-        bg.add_task(poll_and_notify_heygen, vid, body.to_email, body.order_name)
-    return {"ok": True, "provider": "heygen", "video_id": vid}
-
-@app.get("/api/heygen/status")
-def heygen_status_endpoint(video_id: str = Query(..., min_length=4)):
-    if video_id in {"INSERISCI_ID", "QUI_IL_VIDEO_ID"}:
-        raise HTTPException(400, "video_id è un placeholder: usa l’ID reale restituito da /api/heygen/submit")
-    return heygen_status(video_id)
-
-# =========================
-# ADMIN API
-# =========================
-@app.get("/api/admin/jobs")
-def admin_jobs(_: bool = Depends(require_admin_header)):
-    return {"ok": True, "jobs": _jobs_list()}
-
-@app.get("/api/admin/jobs/{job_id}")
-def admin_job_detail(job_id: str, _: bool = Depends(require_admin_header)):
-    with JOBS_LOCK:
-        j = JOBS.get(job_id)
-    if not j:
-        raise HTTPException(404, "Job not found")
-    return {"ok": True, "job": j}
-
-@app.post("/api/admin/resend-email/{job_id}")
-def admin_resend_email(job_id: str, _: bool = Depends(require_admin_header)):
-    with JOBS_LOCK:
-        j = JOBS.get(job_id)
-    if not j:
-        raise HTTPException(404, "Job not found")
-    if not j.get("to_email"):
-        raise HTTPException(400, "Job senza email")
-    if not j.get("video_url"):
-        raise HTTPException(400, "Video non pronto")
-    html = (
-        "<p>Ciao! 👋</p><p>Il tuo video è pronto.</p>"
-        f'<p><a href="{j["video_url"]}" target="_blank">Scarica</a></p>'
-    )
-    send_email(j["to_email"], f"Video pronto — Ordine {j.get('order_name', '')}", html)
-    return {"ok": True, "resent": True}
-
-# =========================
-# SHOPIFY PRODUCT (facoltativo)
-# =========================
-def _shop_headers():
-    if not (SHOP_DOMAIN and SHOP_ADMIN_TOKEN):
-        raise HTTPException(500, "SHOP_DOMAIN/SHOP_ADMIN_TOKEN mancanti")
-    return {
-        "X-Shopify-Access-Token": SHOP_ADMIN_TOKEN,
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-
-def shopify_create_product(title: str, body_html: str, price: float,
-                           image_url: Optional[str] = None,
-                           published: bool = True,
-                           tags: Optional[List[str]] = None) -> Dict[str, Any]:
-    payload = {
-        "product": {
-            "title": title,
-            "body_html": body_html,
-            "tags": ", ".join(tags or ["EccomiVideo"]),
-            "status": "active" if published else "draft",
-            "variants": [{"price": f"{price:.2f}"}],
-        }
-    }
-    if image_url:
-        payload["product"]["images"] = [{"src": image_url}]
-    url = f"https://{SHOP_DOMAIN}/admin/api/{SHOPIFY_API_VER}/products.json"
-    r = requests.post(url, headers=_shop_headers(), json=payload, timeout=60)
-    if r.status_code not in (200, 201):
-        raise HTTPException(r.status_code, f"Shopify create product error: {r.text}")
-    return r.json()
-
-@app.post("/api/admin/publish/{job_id}")
-def admin_publish(job_id: str,
-                  price: float = 19.0,
-                  published: bool = True,
-                  _: bool = Depends(require_admin_header)):
-    with JOBS_LOCK:
-        j = JOBS.get(job_id)
-    if not j:
-        raise HTTPException(404, "Job not found")
-    if not j.get("video_url"):
-        raise HTTPException(400, "Video non pronto")
-
-    title = f"Video AI — {j.get('provider', '')}".strip()
-    desc = []
-    if j.get("order_name"):
-        desc.append(f"<p><b>Ordine:</b> {j['order_name']}</p>")
-    if j.get("to_email"):
-        desc.append(f"<p><b>Email cliente:</b> {j['to_email']}</p>")
-    desc.append(f'<p><a href="{j["video_url"]}" target="_blank">Scarica il video</a></p>')
-    body_html = "\n".join(desc)
-
-    img = j.get("thumbnail") or None
-    res = shopify_create_product(title=title,
-                                 body_html=body_html,
-                                 price=price,
-                                 image_url=img,
-                                 published=published)
-    prod = (res or {}).get("product") or {}
-    handle = prod.get("handle")
-    pid = prod.get("id")
-    url = f"https://www.eccomionline.com/products/{handle}" if handle else ""
-    _jobs_upsert(job_id, {"shopify_product_id": pid, "shopify_url": url})
-    return {"ok": True, "product_id": pid, "product_url": url}
-
-# =========================
-# EVS: ORDINI DA SHOPIFY
-# =========================
-@app.post("/evs/order", tags=["evs"])
-async def evs_create_order(
-    email: str = Form(...),
-    consent: bool = Form(...),
-    script_text: str = Form(""),
-    reference_link: str = Form(""),
-    photo: UploadFile = File(...),
-    audio: Optional[UploadFile] = File(None),
-):
-    if not consent:
-        raise HTTPException(status_code=400, detail="Consenso obbligatorio")
-
-    order_id = str(uuid.uuid4())
-
+def evs_update_meta(order_id: str, changes: Dict[str, Any]):
     order_dir = EVS_STORAGE / order_id
-    order_dir.mkdir(parents=True, exist_ok=True)
-
-    photo_ext = os.path.splitext(photo.filename or "")[1] or ".png"
-    photo_path = order_dir / f"photo{photo_ext}"
-    with photo_path.open("wb") as f:
-        f.write(await photo.read())
-
-    audio_path = None
-    if audio is not None:
-        audio_ext = os.path.splitext(audio.filename or "")[1] or ".wav"
-        audio_path = order_dir / f"audio{audio_ext}"
-        with audio_path.open("wb") as f:
-            f.write(await audio.read())
-
-    meta = {
-        "order_id": order_id,
-        "email": email,
-        "consent": True,
-        "script_text": script_text,
-        "reference_link": reference_link,
-        "photo_path": str(photo_path),
-        "audio_path": str(audio_path) if audio_path else None,
-        "status": "PENDING_PAYMENT",
-        "created_at": _now_iso(),
-    }
-    try:
-        with (order_dir / "meta.json").open("w", encoding="utf-8") as f:
-            json.dump(meta, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print("❌ EVS meta save error:", e)
-
-    return JSONResponse({"ok": True, "evs_token": order_id})
-
-def list_evs_orders(limit: int = 100) -> List[Dict[str, Any]]:
-    orders: List[Dict[str, Any]] = []
-    if not EVS_STORAGE.exists():
-        return orders
-    for d in sorted(EVS_STORAGE.glob("*"), key=lambda p: p.stat().st_mtime, reverse=True):
-        meta_path = d / "meta.json"
-        if not meta_path.exists():
-            continue
-        try:
-            with meta_path.open("r", encoding="utf-8") as f:
-                m = json.load(f)
-        except Exception as e:
-            print("⚠️ EVS meta read error:", e, meta_path)
-            continue
-        m.setdefault("order_id", d.name)
-        orders.append(m)
-        if len(orders) >= limit:
-            break
-    return orders
-
-@app.get("/api/admin/evs-orders")
-def admin_evs_orders(_: bool = Depends(require_admin_header)):
-    return {"ok": True, "orders": list_evs_orders()}
-
-def evs_update_meta(order_id: str, changes: Dict[str, Any]) -> Dict[str, Any]:
-    order_dir = EVS_STORAGE / order_id
+    if not order_dir.exists():
+        return
     meta_path = order_dir / "meta.json"
-    if not meta_path.exists():
-        raise HTTPException(404, "Ordine EVS non trovato")
-
-    with meta_path.open("r", encoding="utf-8") as f:
-        meta = json.load(f)
-
+    meta = _safe_json_load(meta_path)
     meta.update(changes)
-    meta.setdefault("order_id", order_id)
+    meta["order_id"] = order_id
     meta["updated_at"] = _now_iso()
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    with meta_path.open("w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False, indent=2)
-
-    return meta
-
-def evs_launch_heygen(order_id: str,
-                      order_name: Optional[str],
-                      email: Optional[str],
-                      bg: BackgroundTasks):
-
-    order_dir = EVS_STORAGE / order_id
-    meta_path = order_dir / "meta.json"
-    if not meta_path.exists():
-        print("[EVS] meta non trovata per", order_id)
-        return
-
-    with meta_path.open("r", encoding="utf-8") as f:
-        meta = json.load(f)
-
-    script = (meta.get("script_text") or "").strip() or \
-             "Ciao! Il tuo Video AI è in lavorazione. Ti avviseremo appena è pronto. 😊"
-
-    print(f"[EVS] Lancio Heygen SOLO TESTO per token {order_id} (ordine {order_name})")
-
-    try:
-        video_id = heygen_submit_text(
-            script_text=script,
-            avatar_id=AVATAR_ID,
-            voice_id=VOICE_ID,
-    )
-    except HTTPException as e:
-        print(f"[EVS] ERRORE HeyGen {e.status_code} → fallback D-ID per {order_id}")
-        evs_update_meta(order_id, {"status": f"HEYGEN_FAILED_{e.status_code}"})
-        evs_launch_did(order_id, order_name, email, bg)
-        return
-        
-    order_name_final = order_name or meta.get("shopify_order_name") or ""
-    email_final = email or meta.get("email") or None
-
-    _jobs_upsert(video_id, {
-        "id": video_id,
-        "provider": "heygen",
-        "status": "submitted",
-        "to_email": email_final,
-        "order_name": order_name_final,
-        "evs_token": order_id,
-    })
-
-    evs_update_meta(order_id, {
-        "status": "PROCESSING",
-        "shopify_order_name": order_name_final,
-        "email": email_final,
-        "heygen_video_id": video_id,
-    })
-
-    if email_final:
-        bg.add_task(poll_and_notify_heygen, video_id, email_final, order_name_final)
-
-def evs_launch_did(order_id: str,
-                   order_name: Optional[str],
-                   email: Optional[str],
-                   bg: BackgroundTasks):
-
-    order_dir = EVS_STORAGE / order_id
-    meta_path = order_dir / "meta.json"
-    if not meta_path.exists():
-        print("[EVS] meta non trovata per", order_id)
-        return
-
-    with meta_path.open("r", encoding="utf-8") as f:
-        meta = json.load(f)
-
-    if not PUBLIC_BASE_URL:
-        print("[EVS] PUBLIC_BASE_URL mancante: impossibile usare D-ID fallback")
-        evs_update_meta(order_id, {"status": "ERROR_PUBLIC_BASE_URL"})
-        return
-
-    photo_url = f"{PUBLIC_BASE_URL}/evs/file/{order_id}/photo"
-    audio_url = f"{PUBLIC_BASE_URL}/evs/file/{order_id}/audio" if meta.get("audio_path") else None
-
-    job = Job(
-        image_url=photo_url,
-        script=(meta.get("script_text") or "").strip() or "Ciao! Il tuo video è pronto. 😊",
-        audio_url=audio_url,
-        to_email=email or meta.get("email"),
-        order_name=order_name or meta.get("shopify_order_name") or "",
-    )
-
-    print(f"[EVS] Fallback D-ID per token {order_id}")
-
-    talk = did_create_talk(job)
-    talk_id = talk.get("id")
-    if not talk_id:
-        print("[EVS] ERRORE: talk_id mancante")
-        evs_update_meta(order_id, {"status": "ERROR_DID_NO_TALK_ID"})
-        return
-
-    _jobs_upsert(talk_id, {
-        "id": talk_id,
-        "provider": "d-id",
-        "status": "submitted",
-        "to_email": job.to_email,
-        "order_name": job.order_name,
-        "evs_token": order_id,
-        "raw": talk,
-    })
-
-    evs_update_meta(order_id, {
-        "status": "PROCESSING_DID",
-        "did_talk_id": talk_id,
-    })
-
-    bg.add_task(poll_and_notify_did, job, talk_id)
-
-# =========================
-# SHOPIFY WEBHOOK
-# =========================
-def _verify_shopify_webhook(req: Request, raw_body: bytes):
+def _verify_shopify_hmac(request: Request, raw_body: bytes):
     if not VERIFY_SHOPIFY_HMAC:
         return
     if not SHOPIFY_WEBHOOK_SECRET:
-        raise HTTPException(500, "SHOPIFY_WEBHOOK_SECRET non configurato")
-
-    received = req.headers.get("X-Shopify-Hmac-Sha256") or ""
+        raise HTTPException(500, "SHOPIFY_WEBHOOK_SECRET mancante")
+    received = request.headers.get("X-Shopify-Hmac-Sha256") or ""
     digest = hmac.new(
         SHOPIFY_WEBHOOK_SECRET.encode("utf-8"),
         raw_body,
         hashlib.sha256,
     ).digest()
     expected = base64.b64encode(digest).decode("utf-8")
-
     if not hmac.compare_digest(received, expected):
-        print("[EVS] Webhook HMAC non valido")
         raise HTTPException(401, "Webhook HMAC non valido")
 
-@app.post("/shopify/webhook", tags=["shopify"])
+def _require_env(name: str, value: str):
+    if not value:
+        raise HTTPException(500, f"ENV mancante: {name}")
+
+# =========================
+# CORE LOGIC: RUNPOD
+# =========================
+def evs_launch_runpod(order_id: str, order_name: str, email: str):
+    """
+    Allineato al tuo handler RunPod:
+      input.image_url  (obbligatorio)
+      input.text       (opzionale -> TTS se audio non c'è)
+      input.gender     (male/female)
+      input.audio_url  (opzionale)
+    """
+    _require_env("PUBLIC_BASE_URL", PUBLIC_BASE_URL)
+    _require_env("RUNPOD_API_KEY", RUNPOD_API_KEY)
+    _require_env("RUNPOD_ENDPOINT_ID", RUNPOD_ENDPOINT_ID)
+
+    order_dir = EVS_STORAGE / order_id
+    if not order_dir.exists():
+        return
+
+    meta_path = order_dir / "meta.json"
+    meta = _safe_json_load(meta_path)
+
+    # URL pubblici che RunPod deve scaricare
+    photo_url = f"{PUBLIC_BASE_URL.rstrip('/')}/evs/file/{order_id}/photo"
+    audio_exists = bool(meta.get("has_audio"))
+    audio_url = f"{PUBLIC_BASE_URL.rstrip('/')}/evs/file/{order_id}/audio" if audio_exists else None
+
+    # Testo + gender dal meta (default)
+    script_text = (meta.get("script_text") or "").strip() or "Ciao! Il tuo video è pronto."
+    gender = (meta.get("gender") or "male").strip().lower()
+    if gender not in ("male", "female"):
+        gender = "male"
+
+    # 1) Registra su Supabase (opzionale)
+    db_id = None
+    if supabase:
+        try:
+            res = supabase.table("video_jobs").insert({
+                "shopify_order_id": order_name,
+                "customer_email": email,
+                "status": "queued",
+                "input_image_url": photo_url,
+                "input_audio_url": audio_url,
+                "gender": gender,
+                "script_text": script_text,
+                "evs_token": order_id,
+            }).execute()
+            if getattr(res, "data", None):
+                db_id = res.data[0].get("id")
+        except Exception as e:
+            print("⚠️ Supabase insert error:", e)
+
+    # 2) Chiama RunPod /run
+    runpod_url = f"https://api.runpod.ai/v2/{RUNPOD_ENDPOINT_ID}/run"
+    headers = {"Authorization": f"Bearer {RUNPOD_API_KEY}", "Content-Type": "application/json"}
+
+    runpod_input: Dict[str, Any] = {
+        "image_url": photo_url,
+        "text": script_text,
+        "gender": gender,
+    }
+    if audio_url:
+        runpod_input["audio_url"] = audio_url  # se presente, RunPod userà quello
+
+    payload = {"input": runpod_input}
+
+    try:
+        r = requests.post(runpod_url, headers=headers, json=payload, timeout=45)
+        rp_data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+        job_id = rp_data.get("id")
+
+        if not r.ok:
+            evs_update_meta(order_id, {"status": "RUNPOD_SUBMIT_FAILED", "runpod_error": r.text})
+            if supabase and db_id:
+                supabase.table("video_jobs").update({"status": "submit_failed"}).eq("id", db_id).execute()
+            print("❌ RunPod submit failed:", r.status_code, r.text)
+            return
+
+        if job_id:
+            evs_update_meta(order_id, {"status": "PROCESSING_GPU", "runpod_id": job_id, "shopify_order": order_name})
+            if supabase and db_id:
+                supabase.table("video_jobs").update({"runpod_job_id": job_id, "status": "processing"}).eq("id", db_id).execute()
+            print(f"✅ Job inviato a RunPod: {job_id}")
+        else:
+            evs_update_meta(order_id, {"status": "RUNPOD_NO_JOB_ID", "runpod_raw": rp_data})
+            print("❌ RunPod risposta senza id:", rp_data)
+
+    except Exception as e:
+        evs_update_meta(order_id, {"status": "RUNPOD_CONN_ERROR", "runpod_error": str(e)})
+        print("❌ Errore connessione RunPod:", e)
+
+# =========================
+# API ROUTES
+# =========================
+app = FastAPI(title="EVS Pure Automation", version="3.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/")
+def health():
+    return {
+        "status": "online",
+        "engine": "RunPod-SadTalker",
+        "supabase": bool(supabase),
+        "public_base_url": bool(PUBLIC_BASE_URL),
+    }
+
+# Endpoint per ricevere i file dal modulo Shopify (prima del pagamento)
+@app.post("/evs/order")
+async def receive_order(
+    email: str = Form(...),
+    photo: UploadFile = File(...),
+    audio: Optional[UploadFile] = File(None),
+    script_text: str = Form(""),
+    gender: str = Form("male"),
+    order_id: Optional[str] = Form(None),
+):
+    token = order_id or str(uuid.uuid4())
+    order_dir = EVS_STORAGE / token
+    order_dir.mkdir(parents=True, exist_ok=True)
+
+    # Salva foto (mantieni estensione)
+    photo_ext = os.path.splitext(photo.filename or "")[1] or ".png"
+    photo_path = order_dir / f"photo{photo_ext}"
+    photo_path.write_bytes(await photo.read())
+
+    audio_path = None
+    has_audio = False
+    if audio is not None:
+        has_audio = True
+        audio_ext = os.path.splitext(audio.filename or "")[1] or ".wav"
+        audio_path = order_dir / f"audio{audio_ext}"
+        audio_path.write_bytes(await audio.read())
+
+    gender_norm = (gender or "male").strip().lower()
+    if gender_norm not in ("male", "female"):
+        gender_norm = "male"
+
+    meta = {
+        "email": email,
+        "status": "WAITING_PAYMENT",
+        "created_at": _now_iso(),
+        "script_text": script_text or "",
+        "gender": gender_norm,
+        "photo_path": str(photo_path),
+        "audio_path": str(audio_path) if audio_path else None,
+        "has_audio": has_audio,
+    }
+    (order_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return JSONResponse({"ok": True, "evs_token": token})
+
+# Webhook Shopify (order paid)
+@app.post("/shopify/webhook")
 async def shopify_webhook(request: Request, bg: BackgroundTasks):
     raw = await request.body()
-    _verify_shopify_webhook(request, raw)
+    _verify_shopify_hmac(request, raw)
 
     try:
         payload = json.loads(raw.decode("utf-8"))
     except Exception:
         raise HTTPException(400, "Payload JSON non valido")
 
-    financial_status = payload.get("financial_status")
-    if financial_status not in ("paid", "partially_paid"):
-        return {"ok": True, "ignored": "not_paid", "status": financial_status}
+    if payload.get("financial_status") not in ("paid", "partially_paid"):
+        return {"ok": True, "ignored": "not_paid"}
 
-    order_name = payload.get("name") or ""
-    email = payload.get("email") or ((payload.get("customer") or {}).get("email"))
+    order_name = payload.get("name") or "Order"
+    email = payload.get("email") or (payload.get("customer") or {}).get("email") or ""
 
+    # Estrazione Token EVS dalle line item properties
     tokens: List[str] = []
-    for line in payload.get("line_items", []):
-        for p in (line.get("properties") or []):
-            name = (p.get("name") or "").strip()
-            if name == "EVS Token":
-                tok = (p.get("value") or "").strip()
-                if tok:
-                    tokens.append(tok)
+    for item in payload.get("line_items", []):
+        for prop in (item.get("properties") or []):
+            if (prop.get("name") or "").strip() == "EVS Token":
+                val = (prop.get("value") or "").strip()
+                if val:
+                    tokens.append(val)
 
     if not tokens:
         return {"ok": True, "ignored": "no_evs_tokens"}
 
-    print("[EVS] Webhook PAID per ordine", order_name, "token EVS:", tokens)
-
     for tok in tokens:
-        try:
-            evs_update_meta(tok, {"status": "PAID"})
-            evs_launch_heygen(tok, order_name, email, bg)
-        except Exception as e:
-            print("[EVS] errore lancio Heygen per", tok, e)
+        evs_update_meta(tok, {"status": "PAID", "shopify_order": order_name})
+        # lancia RunPod in background
+        bg.add_task(evs_launch_runpod, tok, order_name, email)
 
-    return {"ok": True, "processed_tokens": tokens}
+    return {"ok": True, "processed": tokens}
 
-# =========================
-# EVS FILE PUBLIC
-# =========================
-@app.get("/evs/file/{order_id}/{kind}", tags=["evs"])
-def evs_file(order_id: str, kind: str):
+# Serve i file a RunPod (pubblici via PUBLIC_BASE_URL)
+@app.get("/evs/file/{order_id}/{kind}")
+def serve_file(order_id: str, kind: str):
     order_dir = EVS_STORAGE / order_id
     meta_path = order_dir / "meta.json"
     if not meta_path.exists():
         raise HTTPException(404, "Ordine EVS non trovato")
 
-    try:
-        with meta_path.open("r", encoding="utf-8") as f:
-            meta = json.load(f)
-    except Exception as e:
-        print("⚠️ EVS meta read error in /evs/file:", e)
-        raise HTTPException(500, "Errore lettura meta EVS")
+    meta = _safe_json_load(meta_path)
 
     if kind == "photo":
         path_str = meta.get("photo_path")
@@ -971,288 +303,8 @@ def evs_file(order_id: str, kind: str):
     if not ctype:
         ctype = "application/octet-stream"
 
-    with open(path_str, "rb") as f:
-        data = f.read()
+    return Response(content=Path(path_str).read_bytes(), media_type=ctype)
 
-    return Response(content=data, media_type=ctype)
-
-# =========================
-# DASHBOARD
-# =========================
-@app.get("/dashboard", response_class=HTMLResponse)
-def dashboard_page():
-    return """
-<!doctype html><html lang="it"><meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Eccomi Video — Dashboard</title>
-<style>
-body{font-family:system-ui,Inter,sans-serif;margin:24px;max-width:1100px}
-h1{margin:0 0 12px}
-section{margin:16px 0;padding:12px;border:1px solid #e5e7eb;border-radius:8px;background:#fafafa}
-label{display:block;margin:6px 0 2px}
-input,select,textarea{width:100%;padding:8px;border:1px solid #ddd;border-radius:6px}
-.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
-.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
-.btn{padding:.45rem .8rem;border:1px solid #ddd;border-radius:.4rem;background:white;cursor:pointer}
-.btn:disabled{opacity:.5;cursor:not-allowed}
-.badge{padding:.2rem .5rem;border-radius:.4rem;background:#eee}
-table{border-collapse:collapse;width:100%;margin-top:12px}
-td,th{border:1px solid #e5e7eb;padding:8px;font-size:14px;vertical-align:top}
-tr:hover{background:#fafafa}
-small{color:#666}
-hr{border:none;border-top:1px solid #eee;margin:12px 0}
-code{font-size:12px}
-</style>
-
-<h1>Eccomi Video — Dashboard</h1>
-<p><small>Auto-refresh 6s · <a href="#" id="refresh">Aggiorna ora</a></small></p>
-
-<section id="creator">
-  <h3>Crea nuovo lavoro (D-ID / Heygen)</h3>
-  <div class="grid3">
-    <div>
-      <label>Tipo</label>
-      <select id="type">
-        <option value="did-photo">Foto parlante (D-ID)</option>
-        <option value="hg-text">Avatar Heygen (testo)</option>
-        <option value="hg-audio">Avatar Heygen (audio URL)</option>
-      </select>
-    </div>
-    <div>
-      <label>Ordine (facoltativo)</label>
-      <input id="order_name" placeholder="es. Ordine #1234">
-    </div>
-    <div>
-      <label>Email destinatario (facoltativo per test)</label>
-      <input id="to_email" placeholder="es. info@eccomionline.com">
-    </div>
-  </div>
-
-  <div id="did-fields">
-    <div class="grid">
-      <div>
-        <label>Image URL (obbligatorio)</label>
-        <input id="image_url" placeholder="https://...jpg/png">
-      </div>
-      <div>
-        <label>Voce (ms:&lt;VOICE&gt; / eleven:&lt;VOICE_ID&gt;)</label>
-        <input id="voice" value="ms:it-IT-GiuseppeNeural">
-      </div>
-    </div>
-    <label>Script (obbligatorio se non passi audio_url)</label>
-    <textarea id="script" rows="3" placeholder="Testo da pronunciare"></textarea>
-    <label>Audio URL (opzionale; se presente ignora Script)</label>
-    <input id="audio_url" placeholder="https://...mp3">
-  </div>
-
-  <div id="hg-text-fields" style="display:none">
-    <label>Script (obbligatorio)</label>
-    <textarea id="hg_script" rows="3" placeholder="Testo per l'avatar Heygen"></textarea>
-    <div class="grid">
-      <div>
-        <label>Avatar ID (facoltativo: usa default)</label>
-        <input id="hg_avatar">
-      </div>
-      <div>
-        <label>Voice ID (facoltativo)</label>
-        <input id="hg_voice" placeholder="it_male_energetic">
-      </div>
-    </div>
-  </div>
-
-  <div id="hg-audio-fields" style="display:none">
-    <div class="grid">
-      <div>
-        <label>Audio URL (obbligatorio)</label>
-        <input id="hg_audio_url" placeholder="https://...mp3">
-      </div>
-      <div>
-        <label>Avatar ID (facoltativo: usa default)</label>
-        <input id="hg_avatar2">
-      </div>
-    </div>
-  </div>
-
-  <hr/>
-  <button class="btn" id="create">Crea lavoro</button>
-  <span id="msg" style="margin-left:8px"></span>
-</section>
-
-<h3>Lavori video (D-ID / Heygen)</h3>
-<table id="jobs"><thead>
-<tr><th>ID</th><th>Provider</th><th>Status</th><th>Video</th><th>Email</th><th>Ordine</th><th>Azioni</th></tr>
-</thead><tbody></tbody></table>
-
-<section id="evs-section">
-  <h3>Ordini EVS da Shopify</h3>
-  <p><small>Ultimi ordini salvati in <code>data/evs_orders</code> (stato PENDING/PAID ecc.).</small></p>
-  <table id="evs-orders-table">
-    <thead>
-      <tr>
-        <th>EVS Token</th>
-        <th>Email</th>
-        <th>Status</th>
-        <th>Creato il</th>
-        <th>Foto</th>
-        <th>Audio</th>
-        <th>Link di riferimento</th>
-      </tr>
-    </thead>
-    <tbody></tbody>
-  </table>
-</section>
-
-<script>
-function askToken(){
-  let tk = new URLSearchParams(location.search).get("token");
-  if(!tk) tk = sessionStorage.getItem("eccomi_admin_token") || "";
-  if(!tk){ tk = prompt("Inserisci ADMIN_TOKEN"); }
-  if(!tk){ document.body.innerHTML = "<p>Token mancante.</p>"; return null; }
-  sessionStorage.setItem("eccomi_admin_token", tk);
-  return tk;
-}
-const token = askToken(); if(!token) throw new Error("No token");
-
-// toggle campi
-const selType = document.getElementById('type');
-const didBox = document.getElementById('did-fields');
-const hgTextBox = document.getElementById('hg-text-fields');
-const hgAudioBox = document.getElementById('hg-audio-fields');
-function updateFields(){
-  const t = selType.value;
-  didBox.style.display = (t==='did-photo')?'block':'none';
-  hgTextBox.style.display = (t==='hg-text')?'block':'none';
-  hgAudioBox.style.display = (t==='hg-audio')?'block':'none';
-}
-selType.onchange = updateFields; updateFields();
-
-async function loadJobs(){
-  const r = await fetch('/api/admin/jobs', { headers:{ Authorization:`Bearer ${token}` }});
-  if(!r.ok){ document.body.innerHTML = "<p>Unauthorized</p>"; return; }
-  const data = await r.json();
-  const tbody = document.querySelector("#jobs tbody");
-  tbody.innerHTML = "";
-  for(const j of (data.jobs||[])){
-    const tr = document.createElement("tr");
-    const v = j.video_url ? `<a href="${j.video_url}" target="_blank">apri</a>` : "";
-    const pub = j.video_url ? `<button class="btn" onclick="publish('${j.id}')">Pubblica</button>` : `<button class="btn" disabled>Pubblica</button>`;
-    const resend = j.video_url ? `<button class="btn" onclick="resend('${j.id}')">Re-invia email</button>` : `<button class="btn" disabled>Re-invia email</button>`;
-    tr.innerHTML = `
-      <td><code>${j.id||""}</code><br><small>${j.updated_at||""}</small></td>
-      <td>${j.provider||""}</td>
-      <td><span class="badge">${j.status||""}</span></td>
-      <td>${v}</td>
-      <td>${j.to_email||""}</td>
-      <td>${j.order_name||""}</td>
-      <td>${pub} ${resend} ${j.shopify_url?('<a class="btn" target="_blank" href="'+j.shopify_url+'">Prodotto</a>'):''}</td>
-    `;
-    tbody.appendChild(tr);
-  }
-}
-
-async function loadEvsOrders(){
-  const r = await fetch('/api/admin/evs-orders', { headers:{ Authorization:`Bearer ${token}` }});
-  if(!r.ok) return;
-  const data = await r.json();
-  const tbody = document.querySelector("#evs-orders-table tbody");
-  tbody.innerHTML = "";
-  for(const o of (data.orders||[])){
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td><code>${o.order_id||""}</code></td>
-      <td>${o.email||""}</td>
-      <td><span class="badge">${o.status||""}</span></td>
-      <td><small>${o.created_at||""}</small></td>
-      <td><small>${o.photo_path ? o.photo_path.split("/").slice(-1)[0] : ""}</small></td>
-      <td><small>${o.audio_path ? o.audio_path.split("/").slice(-1)[0] : ""}</small></td>
-      <td><small>${o.reference_link||""}</small></td>
-    `;
-    tbody.appendChild(tr);
-  }
-}
-
-document.getElementById("refresh").onclick = (e)=>{ e.preventDefault(); loadJobs(); loadEvsOrders(); };
-setInterval(function(){ loadJobs(); loadEvsOrders(); }, 6000);
-loadJobs();
-loadEvsOrders();
-
-async function resend(id){
-  const r = await fetch(`/api/admin/resend-email/${encodeURIComponent(id)}`, {
-    method:"POST", headers:{ Authorization:`Bearer ${token}` }
-  });
-  alert(r.ok ? "Email inviata" : "Errore reinvio");
-}
-
-async function publish(id){
-  const prezzo = prompt("Prezzo prodotto (€)", "19");
-  if(!prezzo) return;
-  const r = await fetch(`/api/admin/publish/${encodeURIComponent(id)}?price=${encodeURIComponent(prezzo)}`, {
-    method:"POST", headers:{ Authorization:`Bearer ${token}` }
-  });
-  const data = await r.json().catch(()=> ({}));
-  if(r.ok){
-    alert("Pubblicato ✅");
-    loadJobs();
-  }else{
-    alert("Errore pubblicazione: " + (data.detail || r.status));
-  }
-}
-
-window.resend = resend;
-window.publish = publish;
-
-function setMsg(text, ok=true){
-  const el = document.getElementById('msg');
-  el.textContent = text;
-  el.style.color = ok ? "green" : "crimson";
-}
-document.getElementById('create').onclick = async ()=>{
-  setMsg("Invio in corso...", true);
-  const t = selType.value;
-  const order_name = document.getElementById('order_name').value || "ManualOrder";
-  const to_email = document.getElementById('to_email').value || "";
-
-  let url, body;
-  if(t === 'did-photo'){
-    const image_url = document.getElementById('image_url').value.trim();
-    const voice = document.getElementById('voice').value.trim() || "ms:it-IT-GiuseppeNeural";
-    const script = document.getElementById('script').value.trim();
-    const audio_url = document.getElementById('audio_url').value.trim();
-    if(!image_url){ setMsg("Image URL obbligatorio", false); return; }
-    if(!script && !audio_url){ setMsg("Scrivi uno script o passa un audio_url", false); return; }
-    url = "/api/jobs/photo";
-    body = { image_url, voice, script: script||undefined, audio_url: audio_url||undefined,
-             to_email: to_email||undefined, order_name };
-  } else if(t === 'hg-text'){
-    const script = document.getElementById('hg_script').value.trim();
-    if(!script){ setMsg("Script obbligatorio", false); return; }
-    url = "/api/heygen/submit";
-    body = { script,
-             avatar_id: (document.getElementById('hg_avatar').value||undefined),
-             voice_id: (document.getElementById('hg_voice').value||undefined),
-             to_email: to_email||undefined, order_name };
-  } else { // hg-audio
-    const audio_url = document.getElementById('hg_audio_url').value.trim();
-    if(!audio_url){ setMsg("Audio URL obbligatorio", false); return; }
-    url = "/api/heygen/submit-audio";
-    body = { audio_url,
-             avatar_id: (document.getElementById('hg_avatar2').value||undefined),
-             to_email: to_email||undefined, order_name };
-  }
-
-  const r = await fetch(url, {
-    method:"POST",
-    headers:{ "Content-Type":"application/json" },
-    body: JSON.stringify(body)
-  });
-  const data = await r.json().catch(()=> ({}));
-  if(!r.ok){
-    setMsg("Errore: " + (data.detail || r.status), false);
-    return;
-  }
-  setMsg("Creato! Aggiorno tabella…", true);
-  loadJobs();
-};
-</script>
-</html>
-"""
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=10000)
