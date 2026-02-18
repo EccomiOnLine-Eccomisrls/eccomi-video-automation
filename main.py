@@ -304,7 +304,3 @@ def serve_file(order_id: str, kind: str):
         ctype = "application/octet-stream"
 
     return Response(content=Path(path_str).read_bytes(), media_type=ctype)
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=10000)
