@@ -265,9 +265,12 @@ async def shopify_webhook(request: Request, bg: BackgroundTasks):
 
     payload = json.loads(raw)
 
+    print("===== SHOPIFY PAYLOAD =====")
+    print(json.dumps(payload, indent=2))
+    print("============================")
+
     if payload.get("financial_status") != "paid":
         return {"ignored": "not_paid"}
-
     order_name = payload.get("name")
     email = payload.get("email")
 
