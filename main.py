@@ -96,6 +96,52 @@ def verify_hmac(request: Request, raw: bytes):
 # RUNPOD
 # =====================================================
 
+def runpod_status(job_id: str):
+    r = requests.get(
+        f"https://api.runpod.ai/v2/{RUNPOD_ENDPOINT_ID}/status/{job_id}",
+        headers={"Authorization": f"Bearer {RUNPOD_API_KEY}"},
+        timeout=30
+    )
+    return r.json()
+
+
+def poll_runpod(order_id: str, job_id: str):
+
+    waited = 0
+    while waited < 1800:
+
+        s = runpod_status(job_id)
+        status = s.get("status", "").upper()
+
+        if status == "COMPLETED":
+            video_url = (
+                s.get("output", {}).get("video_url")
+                or s.get("output", {}).get("url")
+            )
+
+            update_meta(order_id, {
+                "status": "DONE",
+                "video_url": video_url
+            })
+
+            if supabase:
+                supabase.table("video_jobs").update({
+                    "status": "done",
+                    "video_url": video_url
+                }).eq("evs_token", order_id).execute()
+
+            return
+
+        if status in ["FAILED", "CANCELLED"]:
+            update_meta(order_id, {"status": "GPU_FAILED"})
+            return
+
+        time.sleep(8)
+        waited += 8
+
+    update_meta(order_id, {"status": "POLL_TIMEOUT"})
+
+
 def runpod_submit(order_id: str, order_name: str, email: str):
 
     print("🚀 RUNPOD SUBMIT START:", order_id)
@@ -161,7 +207,6 @@ def runpod_submit(order_id: str, order_name: str, email: str):
     print("✅ RUNPOD JOB CREATED:", job_id)
 
     poll_runpod(order_id, job_id)
-
 # =====================================================
 # FASTAPI
 # =====================================================
