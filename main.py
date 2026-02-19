@@ -111,20 +111,37 @@ def poll_runpod(order_id: str, job_id: str):
     while waited < 1800:
 
         s = runpod_status(job_id)
+        print("🔎 RUNPOD STATUS RESPONSE:", s)
+
         status = s.get("status", "").upper()
 
         if status == "COMPLETED":
+
+            video_url = None
+
+            # 1️⃣ Tentativo standard (se endpoint restituisce output strutturato)
             video_url = (
                 s.get("output", {}).get("video_url")
                 or s.get("output", {}).get("url")
             )
+
+            # 2️⃣ Se non trovato, cerchiamo nei logs
+            if not video_url:
+                logs = s.get("logs", "")
+                if logs and "http" in logs:
+                    import re
+                    urls = re.findall(r'https?://\S+', logs)
+                    if urls:
+                        video_url = urls[0]
+
+            print("🎥 VIDEO URL FOUND:", video_url)
 
             update_meta(order_id, {
                 "status": "DONE",
                 "video_url": video_url
             })
 
-            if supabase:
+            if supabase and video_url:
                 supabase.table("video_jobs").update({
                     "status": "done",
                     "video_url": video_url
@@ -133,12 +150,14 @@ def poll_runpod(order_id: str, job_id: str):
             return
 
         if status in ["FAILED", "CANCELLED"]:
+            print("❌ RUNPOD FAILED")
             update_meta(order_id, {"status": "GPU_FAILED"})
             return
 
         time.sleep(8)
         waited += 8
 
+    print("⏰ RUNPOD POLL TIMEOUT")
     update_meta(order_id, {"status": "POLL_TIMEOUT"})
 
 
@@ -190,11 +209,13 @@ def runpod_submit(order_id: str, order_name: str, email: str):
     print("RunPod response body:", r.text)
 
     if not r.ok:
+        print("❌ RUNPOD SUBMIT FAILED")
         update_meta(order_id, {"status": "RUNPOD_SUBMIT_FAILED"})
         return
 
     job_id = r.json().get("id")
     if not job_id:
+        print("❌ NO JOB ID RETURNED")
         update_meta(order_id, {"status": "NO_JOB_ID"})
         return
 
@@ -207,6 +228,7 @@ def runpod_submit(order_id: str, order_name: str, email: str):
     print("✅ RUNPOD JOB CREATED:", job_id)
 
     poll_runpod(order_id, job_id)
+    
 # =====================================================
 # FASTAPI
 # =====================================================
