@@ -260,34 +260,24 @@ async def receive_order(
 @app.post("/shopify/webhook")
 async def shopify_webhook(request: Request, bg: BackgroundTasks):
 
-    raw = await request.body()
-    verify_hmac(request, raw)
-
-    payload = json.loads(raw)
-
-    print("===== SHOPIFY PAYLOAD =====")
-    print(json.dumps(payload, indent=2))
-    print("============================")
-
-    order_name = payload.get("name")
-    email = payload.get("email")
+    payload = await request.json()
 
     tokens = []
 
-for item in payload.get("line_items", []):
-    for prop in item.get("properties", []):
-        if prop.get("name") in ["EVS Token", "EVS Order ID"]:
-            tokens.append(prop.get("value"))
+    for item in payload.get("line_items", []):
+        for prop in item.get("properties", []):
+            if prop.get("name") == "EVS Token":
+                tokens.append(prop.get("value"))
 
-if not tokens:
-    print("NO EVS TOKEN FOUND - IGNORING ORDER")
-    return {"ignored": "no_evs_token"}
+    if not tokens:
+        print("NO EVS TOKEN FOUND - IGNORING ORDER")
+        return {"ignored": "no_evs_token"}
 
-for tok in tokens:
-    update_meta(tok, {"status": "PAID"})
-    bg.add_task(runpod_submit, tok, order_name, email)
-    
-    return {"processed": tokens}
+    for tok in tokens:
+        print("PROCESSING TOKEN:", tok)
+        bg.add_task(runpod_submit, tok)
+
+    return {"ok": True}
 
 # =====================================================
 # SERVE FILES TO RUNPOD
