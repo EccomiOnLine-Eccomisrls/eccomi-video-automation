@@ -269,22 +269,24 @@ async def shopify_webhook(request: Request, bg: BackgroundTasks):
     print(json.dumps(payload, indent=2))
     print("============================")
 
-    if payload.get("financial_status") != "paid":
-        return {"ignored": "not_paid"}
     order_name = payload.get("name")
     email = payload.get("email")
 
-    tokens: List[str] = []
+    tokens = []
 
-    for item in payload.get("line_items", []):
-        for prop in item.get("properties", []):
-            if prop.get("name") in ["EVS Token", "EVS Order ID"]:
-                tokens.append(prop.get("value"))
+for item in payload.get("line_items", []):
+    for prop in item.get("properties", []):
+        if prop.get("name") in ["EVS Token", "EVS Order ID"]:
+            tokens.append(prop.get("value"))
 
-    for tok in tokens:
-        update_meta(tok, {"status": "PAID"})
-        bg.add_task(runpod_submit, tok, order_name, email)
+if not tokens:
+    print("NO EVS TOKEN FOUND - IGNORING ORDER")
+    return {"ignored": "no_evs_token"}
 
+for tok in tokens:
+    update_meta(tok, {"status": "PAID"})
+    bg.add_task(runpod_submit, tok, order_name, email)
+    
     return {"processed": tokens}
 
 # =====================================================
