@@ -262,6 +262,9 @@ async def shopify_webhook(request: Request, bg: BackgroundTasks):
 
     payload = await request.json()
 
+    order_name = payload.get("name", "")
+    email = payload.get("email", "")
+
     tokens = []
 
     for item in payload.get("line_items", []):
@@ -275,10 +278,10 @@ async def shopify_webhook(request: Request, bg: BackgroundTasks):
 
     for tok in tokens:
         print("PROCESSING TOKEN:", tok)
-        bg.add_task(runpod_submit, tok)
+        update_meta(tok, {"status": "PAID"})
+        bg.add_task(runpod_submit, tok, order_name, email)
 
     return {"ok": True}
-
 # =====================================================
 # SERVE FILES TO RUNPOD
 # =====================================================
