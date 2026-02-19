@@ -273,17 +273,16 @@ async def shopify_webhook(request: Request, bg: BackgroundTasks):
 
     tokens: List[str] = []
 
-for item in payload.get("line_items", []):
-    for prop in item.get("properties", []):
-        if prop.get("name") in ["EVS Token", "EVS Order ID"]:
-            tokens.append(prop.get("value"))
+    for item in payload.get("line_items", []):
+        for prop in item.get("properties", []):
+            if prop.get("name") in ["EVS Token", "EVS Order ID"]:
+                tokens.append(prop.get("value"))
 
-for tok in tokens:
-    update_meta(tok, {"status": "PAID"})
-    bg.add_task(runpod_submit, tok, order_name, email)
+    for tok in tokens:
+        update_meta(tok, {"status": "PAID"})
+        bg.add_task(runpod_submit, tok, order_name, email)
 
-return {"processed": tokens}
-
+    return {"processed": tokens}
 
 # =====================================================
 # SERVE FILES TO RUNPOD
