@@ -98,7 +98,12 @@ def verify_hmac(request: Request, raw: bytes):
 
 def runpod_submit(order_id: str, order_name: str, email: str):
 
+    print("🚀 RUNPOD SUBMIT START:", order_id)
+    print("Order name:", order_name)
+    print("Email:", email)
+
     if not RUNPOD_API_KEY or not RUNPOD_ENDPOINT_ID:
+        print("❌ RUNPOD ENV MISSING")
         update_meta(order_id, {"status": "RUNPOD_ENV_MISSING"})
         return
 
@@ -124,12 +129,19 @@ def runpod_submit(order_id: str, order_name: str, email: str):
         "Content-Type": "application/json"
     }
 
+    print("Calling RunPod endpoint...")
+    print("Endpoint ID:", RUNPOD_ENDPOINT_ID)
+    print("Payload:", json.dumps(payload, indent=2))
+
     r = requests.post(
         f"https://api.runpod.ai/v2/{RUNPOD_ENDPOINT_ID}/run",
         headers=headers,
         json=payload,
         timeout=45
     )
+
+    print("RunPod response status:", r.status_code)
+    print("RunPod response body:", r.text)
 
     if not r.ok:
         update_meta(order_id, {"status": "RUNPOD_SUBMIT_FAILED"})
@@ -146,54 +158,9 @@ def runpod_submit(order_id: str, order_name: str, email: str):
         "shopify_order": order_name
     })
 
+    print("✅ RUNPOD JOB CREATED:", job_id)
+
     poll_runpod(order_id, job_id)
-
-
-def runpod_status(job_id: str):
-    r = requests.get(
-        f"https://api.runpod.ai/v2/{RUNPOD_ENDPOINT_ID}/status/{job_id}",
-        headers={"Authorization": f"Bearer {RUNPOD_API_KEY}"},
-        timeout=30
-    )
-    return r.json()
-
-
-def poll_runpod(order_id: str, job_id: str):
-
-    waited = 0
-    while waited < 1800:
-
-        s = runpod_status(job_id)
-        status = s.get("status", "").upper()
-
-        if status == "COMPLETED":
-            video_url = (
-                s.get("output", {}).get("video_url")
-                or s.get("output", {}).get("url")
-            )
-
-            update_meta(order_id, {
-                "status": "DONE",
-                "video_url": video_url
-            })
-
-            if supabase:
-                supabase.table("video_jobs").update({
-                    "status": "done",
-                    "video_url": video_url
-                }).eq("evs_token", order_id).execute()
-
-            return
-
-        if status in ["FAILED", "CANCELLED"]:
-            update_meta(order_id, {"status": "GPU_FAILED"})
-            return
-
-        time.sleep(8)
-        waited += 8
-
-    update_meta(order_id, {"status": "POLL_TIMEOUT"})
-
 
 # =====================================================
 # FASTAPI
