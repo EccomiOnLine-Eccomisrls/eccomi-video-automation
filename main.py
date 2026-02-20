@@ -288,7 +288,7 @@ async def receive_order(
 
 
 # =====================================================
-# SHOPIFY WEBHOOK (NON BLOCCANTE)
+# SHOPIFY WEBHOOK (NON BLOCCANTE + SUPABASE UPSERT)
 # =====================================================
 
 @app.post("/shopify/webhook")
@@ -297,6 +297,7 @@ async def shopify_webhook(request: Request, bg: BackgroundTasks):
     payload = await request.json()
 
     order_name = payload.get("name", "")
+    order_id = payload.get("id", "")
     email = payload.get("email", "")
 
     tokens = []
@@ -307,15 +308,39 @@ async def shopify_webhook(request: Request, bg: BackgroundTasks):
                 tokens.append(prop.get("value"))
 
     if not tokens:
-        print("NO EVS TOKEN FOUND - IGNORING ORDER")
+        print("⚠️ NO EVS TOKEN FOUND - IGNORING ORDER")
         return {"ignored": "no_evs_token"}
 
     for tok in tokens:
-        print("PROCESSING TOKEN:", tok)
-        update_meta(tok, {"status": "PAID"})
+
+        print(f"🚀 PROCESSING TOKEN: {tok}")
+
+        # ✅ Update file locale
+        update_meta(tok, {
+            "status": "PAID",
+            "shopify_order_id": order_id
+        })
+
+        # ✅ UPSERT Supabase
+        if supabase:
+            try:
+                supabase.table("video_jobs").upsert({
+                    "evs_token": tok,
+                    "customer_email": email,
+                    "status": "paid",
+                    "shopify_order_id": str(order_id)
+                }).execute()
+
+                print(f"✅ Supabase UPSERT OK: {tok}")
+
+            except Exception as e:
+                print(f"❌ Supabase UPSERT ERROR: {e}")
+
+        # 🚀 Avvia GPU
         bg.add_task(runpod_submit, tok, order_name, email)
 
     return {"ok": True}
+    
 # =====================================================
 # SERVE FILES TO RUNPOD
 # =====================================================
