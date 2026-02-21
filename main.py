@@ -7,6 +7,7 @@ import json
 import requests
 import uuid
 import mimetypes
+import re
 from typing import Optional, Dict, Any
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +15,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, HTMLResponse
+from fastapi.responses import StreamingResponse
 
 from supabase import create_client, Client
 
@@ -37,6 +39,15 @@ EVS_STORAGE_DIR = os.getenv("EVS_STORAGE_DIR", "data/evs_orders")
 SHOP_DOMAIN = os.getenv("SHOP_DOMAIN", "")  # es: eccomionline.myshopify.com
 SHOP_ADMIN_TOKEN = os.getenv("SHOP_ADMIN_TOKEN", "")
 SHOPIFY_API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2024-01")
+
+# ---- RunPod polling / timeouts ----
+# Allinea questi ai settaggi RunPod (es: 3600)
+RUNPOD_POLL_MAX_SECONDS = int(os.getenv("RUNPOD_POLL_MAX_SECONDS", "3600"))  # default 3600
+RUNPOD_POLL_INTERVAL_SECONDS = int(os.getenv("RUNPOD_POLL_INTERVAL_SECONDS", "8"))  # default 8
+RUNPOD_SUBMIT_TIMEOUT = int(os.getenv("RUNPOD_SUBMIT_TIMEOUT", "45"))  # default 45
+
+# Download timeout per scaricare mp4 da URL esterno
+VIDEO_DOWNLOAD_TIMEOUT = int(os.getenv("VIDEO_DOWNLOAD_TIMEOUT", "240"))  # default 240
 
 # =====================================================
 # STORAGE
@@ -79,7 +90,7 @@ def update_meta(order_id: str, changes: Dict[str, Any]):
     meta = load_json(meta_path)
     meta.update(changes)
     meta["updated_at"] = now_iso()
-    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def verify_hmac(request: Request, raw: bytes):
@@ -108,6 +119,43 @@ def download_to_file(url: str, dest: Path, timeout=120):
             for chunk in r.iter_content(chunk_size=1024 * 512):
                 if chunk:
                     f.write(chunk)
+
+
+# =====================================================
+# TEXT SANITIZATION (anti emoji / caratteri strani)
+# =====================================================
+def sanitize_text(text: str) -> str:
+    """
+    Rende il testo 'safe' per pipeline esterne (TTS / RunPod / modelli):
+    - normalizza newline
+    - rimuove caratteri di controllo
+    - rimuove emoji / simboli non-ASCII (può evitare crash/bug)
+    """
+    if not text:
+        return ""
+
+    # newline uniformi
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+    # rimuove caratteri di controllo (tranne \n e \t)
+    text = "".join(ch for ch in text if ch == "\n" or ch == "\t" or (ord(ch) >= 32 and ord(ch) != 127))
+
+    # rimuove emoji / simboli (range unicode estesi)
+    # 1) elimina surrogate / non validi
+    text = text.encode("utf-8", "ignore").decode("utf-8", "ignore")
+
+    # 2) elimina tutto ciò che non è ASCII base (soluzione "professionale" per evitare rogne)
+    #    Se vuoi mantenere accenti italiani, dimmelo e faccio versione "latin-1 safe".
+    text = text.encode("ascii", "ignore").decode("ascii", "ignore")
+
+    # trim e spazi multipli
+    text = re.sub(r"[ \t]{2,}", " ", text).strip()
+
+    # limite di sicurezza (evita input giganteschi)
+    if len(text) > 4000:
+        text = text[:4000].rstrip()
+
+    return text
 
 # =====================================================
 # SHOPIFY: FULFILL + NOTIFICA
@@ -155,7 +203,6 @@ def create_fulfillment(order_id: str, message: str, view_link: str):
                 {"fulfillment_order_id": fo_id}
             ],
             "notify_customer": True,
-            # tracking_info serve anche per far comparire un link “carino” al cliente
             "tracking_info": {
                 "number": "EVS",
                 "company": "Eccomi Online",
@@ -182,27 +229,31 @@ def runpod_status(job_id: str):
     return r.json()
 
 
+def _extract_first_http_url(text: str) -> Optional[str]:
+    if not text:
+        return None
+    urls = re.findall(r'https?://\S+', text)
+    return urls[0] if urls else None
+
+
 def poll_runpod(order_id: str, job_id: str):
     waited = 0
-    while waited < 1800:
+    while waited < RUNPOD_POLL_MAX_SECONDS:
         try:
             s = runpod_status(job_id)
-            status = s.get("status", "").upper()
+            status = (s.get("status", "") or "").upper()
             print("🔎 RUNPOD STATUS:", status)
 
             if status == "COMPLETED":
                 video_url = (
-                    s.get("output", {}).get("video_url")
-                    or s.get("output", {}).get("url")
+                    (s.get("output", {}) or {}).get("video_url")
+                    or (s.get("output", {}) or {}).get("url")
                 )
 
+                # fallback: prova a pescare un link dai logs
                 if not video_url:
                     logs = s.get("logs", "")
-                    if logs and "http" in logs:
-                        import re
-                        urls = re.findall(r'https?://\S+', logs)
-                        if urls:
-                            video_url = urls[0]
+                    video_url = _extract_first_http_url(logs)
 
                 print("🎥 SOURCE VIDEO URL:", video_url)
 
@@ -210,7 +261,7 @@ def poll_runpod(order_id: str, job_id: str):
                 local_path = EVS_STORAGE / order_id / "video.mp4"
                 if video_url:
                     try:
-                        download_to_file(video_url, local_path)
+                        download_to_file(video_url, local_path, timeout=VIDEO_DOWNLOAD_TIMEOUT)
                         print("✅ Video salvato in locale:", str(local_path))
                     except Exception as e:
                         print("⚠️ Download locale fallito:", e)
@@ -232,7 +283,6 @@ def poll_runpod(order_id: str, job_id: str):
                     try:
                         supabase.table("video_jobs").update({
                             "status": "done",
-                            # mettiamo il link ECcomi dentro video_url (così è quello che userai sempre)
                             "video_url": view_link or video_url,
                             "runpod_job_id": job_id
                         }).eq("evs_token", order_id).execute()
@@ -274,8 +324,8 @@ def poll_runpod(order_id: str, job_id: str):
         except Exception as e:
             print("⚠️ Polling error:", e)
 
-        time.sleep(8)
-        waited += 8
+        time.sleep(RUNPOD_POLL_INTERVAL_SECONDS)
+        waited += RUNPOD_POLL_INTERVAL_SECONDS
 
     print("⏰ RUNPOD POLL TIMEOUT")
     update_meta(order_id, {"status": "POLL_TIMEOUT"})
@@ -299,13 +349,25 @@ def runpod_submit(order_id: str, order_name: str, email: str):
     order_dir = EVS_STORAGE / order_id
     meta = load_json(order_dir / "meta.json")
 
+    # --- SANITIZZA TESTO PRIMA DI INVIARE ---
+    raw_text = meta.get("script_text", "") or ""
+    cleaned_text = sanitize_text(raw_text)
+
+    # salva anche in meta (così sai cosa è stato realmente usato)
+    if cleaned_text != raw_text:
+        update_meta(order_id, {
+            "script_text_original": raw_text,
+            "script_text": cleaned_text,
+            "script_text_sanitized": True
+        })
+
     photo_url = f"{PUBLIC_BASE_URL}/evs/file/{order_id}/photo"
     audio_url = f"{PUBLIC_BASE_URL}/evs/file/{order_id}/audio" if meta.get("has_audio") else None
 
     payload = {
         "input": {
             "image_url": photo_url,
-            "text": meta.get("script_text", ""),
+            "text": cleaned_text,
             "gender": meta.get("gender", "male"),
         }
     }
@@ -318,7 +380,7 @@ def runpod_submit(order_id: str, order_name: str, email: str):
         f"https://api.runpod.ai/v2/{RUNPOD_ENDPOINT_ID}/run",
         headers=headers,
         json=payload,
-        timeout=45
+        timeout=RUNPOD_SUBMIT_TIMEOUT
     )
 
     print("RunPod response status:", r.status_code)
@@ -333,7 +395,7 @@ def runpod_submit(order_id: str, order_name: str, email: str):
                 print("⚠️ Supabase submit_failed update error:", e)
         return
 
-    job_id = r.json().get("id")
+    job_id = (r.json() or {}).get("id")
     if not job_id:
         update_meta(order_id, {"status": "NO_JOB_ID"})
         return
@@ -362,7 +424,12 @@ app.add_middleware(
 
 @app.get("/")
 def health():
-    return {"status": "online", "supabase": bool(supabase)}
+    return {
+        "status": "online",
+        "supabase": bool(supabase),
+        "poll_max_seconds": RUNPOD_POLL_MAX_SECONDS,
+        "poll_interval_seconds": RUNPOD_POLL_INTERVAL_SECONDS
+    }
 
 # =====================================================
 # UPLOAD FILES (prima del pagamento)
@@ -387,15 +454,19 @@ async def receive_order(
         has_audio = True
         (order_dir / "audio.wav").write_bytes(await audio.read())
 
+    cleaned = sanitize_text(script_text or "")
+
     meta = {
         "email": email,
-        "script_text": script_text,
+        "script_text": cleaned,
+        "script_text_original": script_text,
+        "script_text_sanitized": (cleaned != (script_text or "")),
         "gender": gender,
         "status": "WAITING_PAYMENT",
         "has_audio": has_audio,
         "created_at": now_iso()
     }
-    (order_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    (order_dir / "meta.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
 
     return {"evs_token": token}
 
@@ -521,7 +592,16 @@ def video_stream(token: str):
     video_path = order_dir / "video.mp4"
     if not video_path.exists():
         raise HTTPException(404, "Video not ready")
-    return Response(content=video_path.read_bytes(), media_type="video/mp4")
+
+    def iterfile():
+        with open(video_path, "rb") as f:
+            while True:
+                chunk = f.read(1024 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+
+    return StreamingResponse(iterfile(), media_type="video/mp4")
 
 @app.get("/video/{token}/download")
 def video_download(token: str):
@@ -534,7 +614,16 @@ def video_download(token: str):
     headers = {
         "Content-Disposition": f'attachment; filename="{filename}"'
     }
-    return Response(content=video_path.read_bytes(), media_type="video/mp4", headers=headers)
+
+    def iterfile():
+        with open(video_path, "rb") as f:
+            while True:
+                chunk = f.read(1024 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+
+    return StreamingResponse(iterfile(), media_type="video/mp4", headers=headers)
 
 # =====================================================
 # RETRY FAILED JOB (SUPABASE BASED)
@@ -560,6 +649,9 @@ async def evs_retry(evs_token: str, bg: BackgroundTasks):
 
     email = row.get("customer_email", "")
     order_name = row.get("shopify_order_id", "EVS")
+
+    # aggiorna anche meta.json (se esiste) così resta coerente
+    update_meta(evs_token, {"status": "RETRYING"})
 
     # 2️⃣ Aggiorna stato in Supabase
     supabase.table("video_jobs").update({
