@@ -19,6 +19,10 @@ from fastapi.responses import Response, HTMLResponse, RedirectResponse
 from supabase import create_client, Client
 
 # =====================================================
+# EVS RunPod Engine v3.4 (Supabase Storage + Download Only + Upload Retry x3)
+# =====================================================
+
+# =====================================================
 # ENV
 # =====================================================
 
@@ -40,18 +44,25 @@ SHOP_ADMIN_TOKEN = os.getenv("SHOP_ADMIN_TOKEN", "")
 SHOPIFY_API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2024-01")
 
 # ---- RunPod polling / timeouts ----
-RUNPOD_POLL_MAX_SECONDS = int(os.getenv("RUNPOD_POLL_MAX_SECONDS", "3600"))  # default 3600
+RUNPOD_POLL_MAX_SECONDS = int(os.getenv("RUNPOD_POLL_MAX_SECONDS", "3600"))          # default 3600
 RUNPOD_POLL_INTERVAL_SECONDS = int(os.getenv("RUNPOD_POLL_INTERVAL_SECONDS", "8"))  # default 8
-RUNPOD_SUBMIT_TIMEOUT = int(os.getenv("RUNPOD_SUBMIT_TIMEOUT", "45"))  # default 45
+RUNPOD_SUBMIT_TIMEOUT = int(os.getenv("RUNPOD_SUBMIT_TIMEOUT", "45"))               # default 45
 
 # Download timeout (video da RunPod ecc.)
-VIDEO_DOWNLOAD_TIMEOUT = int(os.getenv("VIDEO_DOWNLOAD_TIMEOUT", "600"))  # default 240
+VIDEO_DOWNLOAD_TIMEOUT = int(os.getenv("VIDEO_DOWNLOAD_TIMEOUT", "600"))  # default 600
 
 # Supabase bucket videos
 SUPABASE_VIDEOS_BUCKET = os.getenv("SUPABASE_VIDEOS_BUCKET", "videos")
 
+# Upload retry
+SUPABASE_UPLOAD_RETRIES = int(os.getenv("SUPABASE_UPLOAD_RETRIES", "3"))      # default 3
+SUPABASE_UPLOAD_RETRY_SLEEP = float(os.getenv("SUPABASE_UPLOAD_RETRY_SLEEP", "3"))  # default 3s
+
+# Cleanup (giorni)
+VIDEO_RETENTION_DAYS = int(os.getenv("VIDEO_RETENTION_DAYS", "10"))  # default 10
+
 # =====================================================
-# STORAGE (solo meta / upload iniziali; i VIDEO finali vanno su Supabase)
+# STORAGE (solo meta + upload iniziali; VIDEO finali su Supabase)
 # =====================================================
 
 EVS_STORAGE = Path(EVS_STORAGE_DIR)
@@ -97,11 +108,10 @@ def update_meta(order_id: str, changes: Dict[str, Any]):
 def verify_hmac(request: Request, raw: bytes):
     if not VERIFY_SHOPIFY_HMAC:
         return
-    digest = hmac.new(
-        SHOPIFY_WEBHOOK_SECRET.encode(),
-        raw,
-        hashlib.sha256
-    ).digest()
+    if not SHOPIFY_WEBHOOK_SECRET:
+        raise HTTPException(500, "SHOPIFY_WEBHOOK_SECRET missing while VERIFY_SHOPIFY_HMAC=true")
+
+    digest = hmac.new(SHOPIFY_WEBHOOK_SECRET.encode(), raw, hashlib.sha256).digest()
     expected = base64.b64encode(digest).decode()
     received = request.headers.get("X-Shopify-Hmac-Sha256", "")
     if not hmac.compare_digest(received, expected):
@@ -119,6 +129,12 @@ def _extract_first_http_url(text: str) -> Optional[str]:
     return urls[0] if urls else None
 
 
+def _truncate(s: str, n: int = 500) -> str:
+    if not s:
+        return ""
+    return s if len(s) <= n else (s[:n] + "…")
+
+
 # =====================================================
 # TEXT SANITIZATION (anti emoji / caratteri strani)
 # =====================================================
@@ -133,9 +149,17 @@ def sanitize_text(text: str) -> str:
         return ""
 
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    text = "".join(ch for ch in text if ch == "\n" or ch == "\t" or (ord(ch) >= 32 and ord(ch) != 127))
+    text = "".join(
+        ch for ch in text
+        if ch == "\n" or ch == "\t" or (ord(ch) >= 32 and ord(ch) != 127)
+    )
+
+    # ripulisce invalidi
     text = text.encode("utf-8", "ignore").decode("utf-8", "ignore")
+
+    # modalità "safe totale": solo ASCII (no emoji, no accenti)
     text = text.encode("ascii", "ignore").decode("ascii", "ignore")
+
     text = re.sub(r"[ \t]{2,}", " ", text).strip()
 
     if len(text) > 4000:
@@ -154,45 +178,71 @@ def supabase_public_video_url(token: str) -> str:
     return supabase.storage.from_(SUPABASE_VIDEOS_BUCKET).get_public_url(file_name)
 
 
+def upload_video_to_supabase_once(order_id: str, source_url: str) -> str:
+    """
+    1 tentativo: scarica video dal source_url e fa upload su Supabase bucket.
+    Ritorna URL pubblico (stringa). Lancia eccezione in caso di errori.
+    """
+    if not supabase:
+        raise RuntimeError("Supabase not connected")
+
+    if not source_url:
+        raise ValueError("source_url empty")
+
+    # Download (se vuoi proprio super-safe su file grossi: streaming + temp file.
+    # Qui teniamo semplice: r.content.)
+    print(f"⬇️ Download video da sorgente: {source_url}")
+    r = requests.get(source_url, timeout=VIDEO_DOWNLOAD_TIMEOUT)
+    r.raise_for_status()
+
+    file_name = f"{order_id}.mp4"
+    print(f"☁️ Upload su Supabase bucket '{SUPABASE_VIDEOS_BUCKET}': {file_name}")
+
+    supabase.storage.from_(SUPABASE_VIDEOS_BUCKET).upload(
+        path=file_name,
+        file=r.content,
+        file_options={
+            "content-type": "video/mp4",
+            "x-upsert": "true"
+        }
+    )
+
+    public_url = supabase.storage.from_(SUPABASE_VIDEOS_BUCKET).get_public_url(file_name)
+    if not public_url:
+        raise RuntimeError("Supabase returned empty public_url")
+    return public_url
+
+
 def upload_video_to_supabase(order_id: str, source_url: str) -> Optional[str]:
     """
-    Scarica il video (URL temporaneo RunPod) e lo salva su Supabase bucket videos.
-    Ritorna l'URL pubblico.
+    Upload robusto: retry automatico (default 3).
+    Ritorna URL pubblico oppure None.
     """
     if not supabase:
         print("❌ Supabase non configurato")
         return None
 
-    try:
-        print(f"⬇️ Download video da sorgente: {source_url}")
-        r = requests.get(source_url, timeout=VIDEO_DOWNLOAD_TIMEOUT)
-        r.raise_for_status()
+    last_err = None
+    for attempt in range(1, SUPABASE_UPLOAD_RETRIES + 1):
+        try:
+            print(f"🔁 Supabase upload attempt {attempt}/{SUPABASE_UPLOAD_RETRIES}")
+            url = upload_video_to_supabase_once(order_id, source_url)
+            print("✅ Upload completato:", url)
+            return url
+        except Exception as e:
+            last_err = e
+            print(f"⚠️ Upload attempt {attempt} failed:", e)
+            if attempt < SUPABASE_UPLOAD_RETRIES:
+                time.sleep(SUPABASE_UPLOAD_RETRY_SLEEP * attempt)
 
-        file_name = f"{order_id}.mp4"
-
-        print(f"☁️ Upload su Supabase bucket '{SUPABASE_VIDEOS_BUCKET}': {file_name}")
-        supabase.storage.from_(SUPABASE_VIDEOS_BUCKET).upload(
-            path=file_name,
-            file=r.content,
-            file_options={
-                "content-type": "video/mp4",
-                "x-upsert": "true"
-            }
-        )
-
-        public_url = supabase.storage.from_(SUPABASE_VIDEOS_BUCKET).get_public_url(file_name)
-        print("✅ Upload completato:", public_url)
-        return public_url
-
-    except Exception as e:
-        print("❌ Errore upload Supabase:", e)
-        return None
+    print("❌ Upload Supabase fallito definitivamente:", last_err)
+    return None
 
 
 def delete_expired_videos(days: int = 10):
     """
     Cancella i file nel bucket 'videos' più vecchi di X giorni.
-    Endpoint manuale /admin/cleanup.
+    (Endpoint manuale /admin/cleanup)
     """
     if not supabase:
         return
@@ -202,7 +252,6 @@ def delete_expired_videos(days: int = 10):
         now = datetime.utcnow()
 
         for f in files or []:
-            # created_at è ISO con Z
             created_at = (f.get("created_at") or "").replace("Z", "")
             if not created_at:
                 continue
@@ -276,7 +325,7 @@ def create_fulfillment(order_id: str, message: str, view_link: str):
 
     r = requests.post(url, headers=shopify_headers(), json=payload, timeout=30)
     print("✅ Shopify fulfillment status:", r.status_code)
-    print("Shopify fulfillment response:", r.text)
+    print("Shopify fulfillment response:", _truncate(r.text, 1200))
 
 
 # =====================================================
@@ -291,6 +340,35 @@ def runpod_status(job_id: str):
     return r.json()
 
 
+def _aggressive_extract_video_url(runpod_payload: Dict[str, Any]) -> Optional[str]:
+    """
+    Estrae URL in modo aggressivo:
+    - output dict: video_url/url
+    - output list: stringa o dict url
+    - logs: primo http
+    """
+    if not runpod_payload:
+        return None
+
+    out = runpod_payload.get("output", None)
+    video_url = None
+
+    if isinstance(out, dict):
+        video_url = out.get("video_url") or out.get("url")
+    elif isinstance(out, list) and len(out) > 0:
+        first = out[0]
+        if isinstance(first, str):
+            video_url = first
+        elif isinstance(first, dict):
+            video_url = first.get("video_url") or first.get("url")
+
+    if not video_url:
+        logs = runpod_payload.get("logs", "")
+        video_url = _extract_first_http_url(logs)
+
+    return video_url
+
+
 def poll_runpod(order_id: str, job_id: str):
     waited = 0
     while waited < RUNPOD_POLL_MAX_SECONDS:
@@ -300,45 +378,62 @@ def poll_runpod(order_id: str, job_id: str):
             print("🔎 RUNPOD STATUS:", status)
 
             if status == "COMPLETED":
-                video_url = (
-                    (s.get("output", {}) or {}).get("video_url")
-                    or (s.get("output", {}) or {}).get("url")
-                )
+                video_url = _aggressive_extract_video_url(s)
 
                 if not video_url:
-                    logs = s.get("logs", "")
-                    video_url = _extract_first_http_url(logs)
+                    print("❌ COMPLETED ma nessun URL trovato!")
+                    update_meta(order_id, {"status": "ERROR_NO_VIDEO_URL"})
+                    if supabase:
+                        try:
+                            supabase.table("video_jobs").update({
+                                "status": "error_no_url",
+                                "runpod_job_id": job_id
+                            }).eq("evs_token", order_id).execute()
+                        except Exception as e:
+                            print("⚠️ Supabase error_no_url update error:", e)
+                    return
 
                 print("🎥 SOURCE VIDEO URL:", video_url)
 
-                # 1) Upload finale su Supabase
-                supa_url = upload_video_to_supabase(order_id, video_url) if video_url else None
+                # 1) Upload finale su Supabase (retry automatico)
+                supa_url = upload_video_to_supabase(order_id, video_url)
 
-                # 2) Link pagina brand (solo download) — NON Render
+                if not supa_url:
+                    print("❌ ERRORE: Upload Supabase fallito definitivamente")
+                    update_meta(order_id, {"status": "ERROR_SUPABASE_UPLOAD"})
+                    if supabase:
+                        try:
+                            supabase.table("video_jobs").update({
+                                "status": "upload_failed",
+                                "runpod_job_id": job_id
+                            }).eq("evs_token", order_id).execute()
+                        except Exception as e:
+                            print("⚠️ Supabase upload_failed update error:", e)
+                    return
+
+                # 2) Link pagina brand (solo download) sul tuo dominio
                 delivery_page = f"{PUBLIC_BASE_URL}/video/{order_id}" if PUBLIC_BASE_URL else f"/video/{order_id}"
-                direct_download = f"{PUBLIC_BASE_URL}/video/{order_id}/download" if PUBLIC_BASE_URL else f"/video/{order_id}/download"
 
                 update_meta(order_id, {
                     "status": "DONE",
                     "video_url_source": video_url,
                     "video_supabase_url": supa_url,
-                    "delivery_page": delivery_page,
-                    "download_link": direct_download
+                    "delivery_page": delivery_page
                 })
 
-                # 3) Supabase table update
+                # 3) Update tabella Supabase
                 shopify_order_id = None
                 if supabase:
                     try:
                         supabase.table("video_jobs").update({
                             "status": "done",
-                            # qui salviamo sempre il link "pulito" (tuo dominio)
                             "video_url": delivery_page,
                             "runpod_job_id": job_id
                         }).eq("evs_token", order_id).execute()
                     except Exception as e:
                         print("⚠️ Supabase update error:", e)
 
+                    # recupera shopify_order_id per fulfillment
                     try:
                         row = supabase.table("video_jobs").select("shopify_order_id").eq("evs_token", order_id).limit(1).execute()
                         if row and row.data and len(row.data) > 0:
@@ -352,6 +447,7 @@ def poll_runpod(order_id: str, job_id: str):
                         "🎬 Il tuo video EVS è pronto!\n\n"
                         "⬇️ Scaricalo da qui:\n"
                         f"{delivery_page}\n\n"
+                        f"Nota: il download resta disponibile per circa {VIDEO_RETENTION_DAYS} giorni.\n\n"
                         "Grazie per aver scelto Eccomi Online."
                     )
                     create_fulfillment(str(shopify_order_id), msg, delivery_page)
@@ -361,11 +457,14 @@ def poll_runpod(order_id: str, job_id: str):
                 return
 
             if status in ["FAILED", "CANCELLED"]:
-                print("❌ RUNPOD FAILED")
+                print("❌ RUNPOD FAILED/CANCELLED")
                 update_meta(order_id, {"status": "GPU_FAILED"})
                 if supabase:
                     try:
-                        supabase.table("video_jobs").update({"status": "failed"}).eq("evs_token", order_id).execute()
+                        supabase.table("video_jobs").update({
+                            "status": "failed",
+                            "runpod_job_id": job_id
+                        }).eq("evs_token", order_id).execute()
                     except Exception as e:
                         print("⚠️ Supabase failed update error:", e)
                 return
@@ -380,7 +479,10 @@ def poll_runpod(order_id: str, job_id: str):
     update_meta(order_id, {"status": "POLL_TIMEOUT"})
     if supabase:
         try:
-            supabase.table("video_jobs").update({"status": "timeout"}).eq("evs_token", order_id).execute()
+            supabase.table("video_jobs").update({
+                "status": "timeout",
+                "runpod_job_id": job_id
+            }).eq("evs_token", order_id).execute()
         except Exception as e:
             print("⚠️ Supabase timeout update error:", e)
 
@@ -393,6 +495,11 @@ def runpod_submit(order_id: str, order_name: str, email: str):
     if not RUNPOD_API_KEY or not RUNPOD_ENDPOINT_ID:
         print("❌ RUNPOD ENV MISSING")
         update_meta(order_id, {"status": "RUNPOD_ENV_MISSING"})
+        if supabase:
+            try:
+                supabase.table("video_jobs").update({"status": "runpod_env_missing"}).eq("evs_token", order_id).execute()
+            except Exception as e:
+                print("⚠️ Supabase runpod_env_missing update error:", e)
         return
 
     order_dir = EVS_STORAGE / order_id
@@ -423,21 +530,33 @@ def runpod_submit(order_id: str, order_name: str, email: str):
 
     headers = {"Authorization": f"Bearer {RUNPOD_API_KEY}", "Content-Type": "application/json"}
 
-    r = requests.post(
-        f"https://api.runpod.ai/v2/{RUNPOD_ENDPOINT_ID}/run",
-        headers=headers,
-        json=payload,
-        timeout=RUNPOD_SUBMIT_TIMEOUT
-    )
-
-    print("RunPod response status:", r.status_code)
-    print("RunPod response body:", r.text)
-
-    if not r.ok:
-        update_meta(order_id, {"status": "RUNPOD_SUBMIT_FAILED"})
+    try:
+        r = requests.post(
+            f"https://api.runpod.ai/v2/{RUNPOD_ENDPOINT_ID}/run",
+            headers=headers,
+            json=payload,
+            timeout=RUNPOD_SUBMIT_TIMEOUT
+        )
+    except Exception as e:
+        print("❌ RunPod submit exception:", e)
+        update_meta(order_id, {"status": "RUNPOD_SUBMIT_EXCEPTION", "runpod_error": str(e)})
         if supabase:
             try:
-                supabase.table("video_jobs").update({"status": "submit_failed"}).eq("evs_token", order_id).execute()
+                supabase.table("video_jobs").update({"status": "submit_exception"}).eq("evs_token", order_id).execute()
+            except Exception as ee:
+                print("⚠️ Supabase submit_exception update error:", ee)
+        return
+
+    print("RunPod response status:", r.status_code)
+    print("RunPod response body:", _truncate(r.text, 1200))
+
+    if not r.ok:
+        update_meta(order_id, {"status": "RUNPOD_SUBMIT_FAILED", "runpod_http": r.status_code})
+        if supabase:
+            try:
+                supabase.table("video_jobs").update({
+                    "status": "submit_failed"
+                }).eq("evs_token", order_id).execute()
             except Exception as e:
                 print("⚠️ Supabase submit_failed update error:", e)
         return
@@ -445,12 +564,21 @@ def runpod_submit(order_id: str, order_name: str, email: str):
     job_id = (r.json() or {}).get("id")
     if not job_id:
         update_meta(order_id, {"status": "NO_JOB_ID"})
+        if supabase:
+            try:
+                supabase.table("video_jobs").update({"status": "no_job_id"}).eq("evs_token", order_id).execute()
+            except Exception as e:
+                print("⚠️ Supabase no_job_id update error:", e)
         return
 
     update_meta(order_id, {"status": "PROCESSING_GPU", "runpod_id": job_id, "shopify_order": order_name})
+
     if supabase:
         try:
-            supabase.table("video_jobs").update({"status": "processing", "runpod_job_id": job_id}).eq("evs_token", order_id).execute()
+            supabase.table("video_jobs").update({
+                "status": "processing",
+                "runpod_job_id": job_id
+            }).eq("evs_token", order_id).execute()
         except Exception as e:
             print("⚠️ Supabase processing update error:", e)
 
@@ -460,7 +588,7 @@ def runpod_submit(order_id: str, order_name: str, email: str):
 # =====================================================
 # FASTAPI
 # =====================================================
-app = FastAPI(title="EVS RunPod Engine v3.2 (Supabase Storage + Download Only)")
+app = FastAPI(title="EVS RunPod Engine v3.4 (Supabase Storage + Download Only + Upload Retry x3)")
 
 app.add_middleware(
     CORSMiddleware,
@@ -474,9 +602,13 @@ app.add_middleware(
 def health():
     return {
         "status": "online",
+        "public_base_url": PUBLIC_BASE_URL,
         "supabase": bool(supabase),
+        "bucket": SUPABASE_VIDEOS_BUCKET,
         "poll_max_seconds": RUNPOD_POLL_MAX_SECONDS,
-        "poll_interval_seconds": RUNPOD_POLL_INTERVAL_SECONDS
+        "poll_interval_seconds": RUNPOD_POLL_INTERVAL_SECONDS,
+        "upload_retries": SUPABASE_UPLOAD_RETRIES,
+        "retention_days": VIDEO_RETENTION_DAYS
     }
 
 
@@ -495,6 +627,7 @@ async def receive_order(
     order_dir = EVS_STORAGE / token
     order_dir.mkdir(parents=True, exist_ok=True)
 
+    # salva input
     (order_dir / "photo.png").write_bytes(await photo.read())
 
     has_audio = False
@@ -515,6 +648,19 @@ async def receive_order(
         "created_at": now_iso()
     }
     (order_dir / "meta.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # opzionale: inserimento in tabella (se vuoi tracciare da subito)
+    if supabase:
+        try:
+            supabase.table("video_jobs").upsert({
+                "evs_token": token,
+                "customer_email": email,
+                "status": "waiting_payment",
+                "gender": gender,
+                "script_text": cleaned
+            }).execute()
+        except Exception as e:
+            print("⚠️ Supabase upsert waiting_payment error:", e)
 
     return {"evs_token": token}
 
@@ -545,8 +691,10 @@ async def shopify_webhook(request: Request, bg: BackgroundTasks):
     for tok in tokens:
         print(f"🚀 PROCESSING TOKEN: {tok}")
 
-        update_meta(tok, {"status": "PAID", "shopify_order_id": str(order_id)})
+        # update meta locale
+        update_meta(tok, {"status": "PAID", "shopify_order_id": str(order_id), "shopify_order_name": order_name})
 
+        # upsert supabase
         if supabase:
             try:
                 supabase.table("video_jobs").upsert({
@@ -559,6 +707,7 @@ async def shopify_webhook(request: Request, bg: BackgroundTasks):
             except Exception as e:
                 print(f"❌ Supabase UPSERT ERROR: {e}")
 
+        # avvia GPU
         bg.add_task(runpod_submit, tok, order_name, email)
 
     return {"ok": True}
@@ -586,14 +735,13 @@ def serve_file(order_id: str, kind: str):
 
 
 # =====================================================
-# VIDEO PAGE (SOLO DOWNLOAD, NO PLAYER)
+# VIDEO PAGE (SOLO DOWNLOAD, NO PLAYER, NO STREAM)
 # =====================================================
 @app.get("/video/{token}", response_class=HTMLResponse)
 def video_view(token: str):
     if not supabase:
         raise HTTPException(500, "Storage not available")
 
-    # Button -> /download (che fa redirect al file supabase)
     download_url = f"{PUBLIC_BASE_URL}/video/{token}/download" if PUBLIC_BASE_URL else f"/video/{token}/download"
 
     html = f"""
@@ -619,7 +767,10 @@ def video_view(token: str):
       <h1>🎬 Il tuo video è pronto</h1>
       <p>Premi il pulsante qui sotto per scaricare il file MP4.</p>
       <a class="btn" href="{download_url}">⬇️ Scarica MP4</a>
-      <div class="note">Per sicurezza, salva il file sul tuo dispositivo. Il link potrebbe scadere dopo alcuni giorni.</div>
+      <div class="note">
+        Per sicurezza, salva il file sul tuo dispositivo.
+        Il link potrebbe non restare disponibile per sempre (circa {VIDEO_RETENTION_DAYS} giorni).
+      </div>
     </div>
   </div>
 </body>
@@ -633,7 +784,8 @@ def video_download(token: str):
     if not supabase:
         raise HTTPException(500, "Storage not available")
 
-    # Redirect al file pubblico su Supabase
+    # Redirect al file pubblico su Supabase.
+    # Nota: se il bucket è "public", questo URL funziona.
     try:
         url = supabase_public_video_url(token)
     except Exception:
@@ -643,12 +795,12 @@ def video_download(token: str):
 
 
 # =====================================================
-# ADMIN CLEANUP (MANUALE)
+# ADMIN CLEANUP (MANUALE) - elimina video > X giorni
 # =====================================================
 @app.post("/admin/cleanup")
 def cleanup():
-    delete_expired_videos(days=10)
-    return {"ok": True, "deleted_older_than_days": 10}
+    delete_expired_videos(days=VIDEO_RETENTION_DAYS)
+    return {"ok": True, "deleted_older_than_days": VIDEO_RETENTION_DAYS}
 
 
 # =====================================================
@@ -674,9 +826,12 @@ async def evs_retry(evs_token: str, bg: BackgroundTasks):
 
     update_meta(evs_token, {"status": "RETRYING"})
 
-    supabase.table("video_jobs").update({
-        "status": "retrying"
-    }).eq("evs_token", evs_token).execute()
+    try:
+        supabase.table("video_jobs").update({
+            "status": "retrying"
+        }).eq("evs_token", evs_token).execute()
+    except Exception as e:
+        print("⚠️ Supabase retrying update error:", e)
 
     print(f"🔁 RETRYING JOB: {evs_token}")
 
