@@ -535,3 +535,30 @@ def video_download(token: str):
         "Content-Disposition": f'attachment; filename="{filename}"'
     }
     return Response(content=video_path.read_bytes(), media_type="video/mp4", headers=headers)
+
+    # =====================================================
+# RETRY FAILED JOB
+# =====================================================
+
+@app.post("/evs/retry/{evs_token}")
+async def evs_retry(evs_token: str, bg: BackgroundTasks):
+
+    order_dir = EVS_STORAGE / evs_token
+    meta = load_json(order_dir / "meta.json")
+
+    if not meta:
+        raise HTTPException(404, "Token not found")
+
+    email = meta.get("email", "")
+    order_name = meta.get("shopify_order", meta.get("shopify_order_id", "EVS"))
+
+    update_meta(evs_token, {"status": "RETRYING"})
+
+    if supabase:
+        supabase.table("video_jobs").update({
+            "status": "retrying"
+        }).eq("evs_token", evs_token).execute()
+
+    bg.add_task(runpod_submit, evs_token, str(order_name), str(email))
+
+    return {"ok": True, "evs_token": evs_token}
