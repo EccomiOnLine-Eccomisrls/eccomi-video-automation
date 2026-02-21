@@ -536,29 +536,43 @@ def video_download(token: str):
     }
     return Response(content=video_path.read_bytes(), media_type="video/mp4", headers=headers)
 
-    # =====================================================
-# RETRY FAILED JOB
+# =====================================================
+# RETRY FAILED JOB (SUPABASE BASED)
 # =====================================================
 
 @app.post("/evs/retry/{evs_token}")
 async def evs_retry(evs_token: str, bg: BackgroundTasks):
 
-    order_dir = EVS_STORAGE / evs_token
-    meta = load_json(order_dir / "meta.json")
+    if not supabase:
+        raise HTTPException(500, "Supabase not connected")
 
-    if not meta:
+    # 1️⃣ Recupera dati dal database
+    result = supabase.table("video_jobs") \
+        .select("*") \
+        .eq("evs_token", evs_token) \
+        .single() \
+        .execute()
+
+    if not result.data:
         raise HTTPException(404, "Token not found")
 
-    email = meta.get("email", "")
-    order_name = meta.get("shopify_order", meta.get("shopify_order_id", "EVS"))
+    row = result.data
 
-    update_meta(evs_token, {"status": "RETRYING"})
+    email = row.get("customer_email", "")
+    order_name = row.get("shopify_order_id", "EVS")
 
-    if supabase:
-        supabase.table("video_jobs").update({
-            "status": "retrying"
-        }).eq("evs_token", evs_token).execute()
+    # 2️⃣ Aggiorna stato in Supabase
+    supabase.table("video_jobs").update({
+        "status": "retrying"
+    }).eq("evs_token", evs_token).execute()
 
+    print(f"🔁 RETRYING JOB: {evs_token}")
+
+    # 3️⃣ Riavvia RunPod
     bg.add_task(runpod_submit, evs_token, str(order_name), str(email))
 
-    return {"ok": True, "evs_token": evs_token}
+    return {
+        "ok": True,
+        "evs_token": evs_token,
+        "status": "retrying"
+    }
