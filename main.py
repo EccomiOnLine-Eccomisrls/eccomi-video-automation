@@ -295,7 +295,30 @@ def video_download(token: str):
 
 @app.post("/evs/retry/{evs_token}")
 async def evs_retry(evs_token: str, bg: BackgroundTasks):
-    res = supabase.table("video_jobs").select("*").eq("evs_token", evs_token).single().execute()
-    if res.data:
-        bg.add_task(runpod_submit, evs_token, res.data.get("shopify_order_name","EVS"), res.data.get("customer_email",""))
-    return {"ok": True, "status": "retrying"}
+    if not supabase:
+        raise HTTPException(500, "Supabase not connected")
+
+    # Togliamo .single() per evitare il crash se il token è errato
+    result = supabase.table("video_jobs") \
+        .select("*") \
+        .eq("evs_token", evs_token) \
+        .execute()
+
+    if not result.data or len(result.data) == 0:
+        # Invece di crashare, rispondiamo con un errore chiaro
+        return JSONResponse(status_code=404, content={"ok": False, "error": "Token non trovato nel database"})
+
+    row = result.data[0]
+    email = row.get("customer_email", "")
+    order_name = row.get("shopify_order_name") or row.get("shopify_order_id") or "EVS"
+
+    # Procediamo con il retry
+    supabase.table("video_jobs").update({
+        "status": "retrying",
+        "updated_at": now_iso()
+    }).eq("evs_token", evs_token).execute()
+
+    print(f"🔁 RETRYING JOB: {evs_token}")
+    bg.add_task(runpod_submit, evs_token, str(order_name), str(email))
+
+    return {"ok": True, "evs_token": evs_token, "status": "retrying"}
