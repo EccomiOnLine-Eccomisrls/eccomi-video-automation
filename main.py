@@ -291,17 +291,27 @@ async def shopify_webhook(request: Request, bg: BackgroundTasks):
     raw = await request.body()
     verify_hmac(request, raw)
     data = json.loads(raw.decode("utf-8"))
-    for item in data.get("line_items", []):
-        for prop in item.get("properties", []):
-            if prop.get("name") == "EVS Token":
-                tok = prop.get("value")
-                if supabase:
-                    supabase.table("video_jobs").update({
-    "status": "paid",
-    "shopify_order_id": str(data.get("id")),
-    "updated_at": now_iso()
-}).eq("evs_token", tok).execute()
-                    
+
+print("==== WEBHOOK PAYLOAD ====")
+print(json.dumps(data, indent=2))
+print("==== END PAYLOAD ====")
+
+for item in data.get("line_items", []):
+    for prop in item.get("properties", []):
+        print("Property found:", prop)
+
+        name = prop.get("name", "").strip().lower()
+
+        if "evs" in name and "token" in name:
+            tok = prop.get("value")
+
+            if supabase:
+                supabase.table("video_jobs").update({
+                    "status": "paid",
+                    "shopify_order_id": str(data.get("id")),
+                    "updated_at": now_iso()
+                }).eq("evs_token", tok).execute()
+
                 bg.add_task(runpod_submit, tok, data.get("name"), data.get("email"))
     return {"ok": True}
 
