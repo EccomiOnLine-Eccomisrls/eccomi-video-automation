@@ -227,7 +227,7 @@ def runpod_submit(tok, name, email):
             "image_url": row.get("photo_url"),
             "text": sanitize_text(row.get("script_text")),
             "gender": row.get("gender", "male"),
-            "token": order_id
+            "token": tok
         }
     }
     if row.get("audio_url"): payload["input"]["audio_url"] = row.get("audio_url")
