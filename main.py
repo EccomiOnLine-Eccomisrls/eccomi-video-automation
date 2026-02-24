@@ -233,24 +233,54 @@ async def receive_order(
 ):
     token = (evs_token or "").strip() or str(uuid.uuid4())
 
+    # =============================
+    # Upload FOTO su Supabase
+    # =============================
     photo_bytes = await photo.read()
-    photo_url = upload_input_to_supabase(token, "photo", photo_bytes, "image/png")
+    photo_url = upload_input_to_supabase(
+        token,
+        "photo",
+        photo_bytes,
+        photo.content_type or "image/png"
+    )
 
+    # =============================
+    # Upload AUDIO su Supabase
+    # =============================
     audio_url = None
     if audio:
         audio_bytes = await audio.read()
-        audio_url = upload_input_to_supabase(token, "audio", audio_bytes, "audio/wav")
+        audio_url = upload_input_to_supabase(
+            token,
+            "audio",
+            audio_bytes,
+            audio.content_type or "audio/wav"
+        )
 
-    supabase.table("video_jobs").upsert({
+    # =============================
+    # Salvataggio DB
+    # =============================
+    if supabase:
+        supabase.table("video_jobs").upsert({
+            "evs_token": token,
+            "customer_email": email,
+            "status": "waiting_payment",
+            "gender": gender,
+            "script_text": sanitize_text(script_text),
+            "photo_url": photo_url,
+            "audio_url": audio_url,
+            "updated_at": now_iso()
+        }).execute()
+
+    # =============================
+    # RESPONSE COMPLETA
+    # =============================
+    return {
+        "ok": True,
         "evs_token": token,
-        "customer_email": email,
-        "status": "waiting_payment",
-        "gender": gender,
-        "script_text": sanitize_text(script_text),
         "photo_url": photo_url,
-        "audio_url": audio_url,
-        "updated_at": now_iso()
-    }).execute()
+        "audio_url": audio_url
+    }
 
     return {"ok": True, "evs_token": token}
 
