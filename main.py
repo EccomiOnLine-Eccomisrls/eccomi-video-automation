@@ -246,7 +246,7 @@ def runpod_submit(tok, name, email):
     
     job_id = r.json().get("id")
     if job_id:
-        supabase.table("video_jobs").update({"status": "processing", "runpod_job_id": job_id}).eq("evs_token", order_id).execute()
+        supabase.table("video_jobs").update({"status": "processing", "runpod_job_id": job_id}).eq("evs_token", tok).execute()
         poll_runpod(order_id, job_id)
 
 # =====================================================
