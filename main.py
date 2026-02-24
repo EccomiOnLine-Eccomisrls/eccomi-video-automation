@@ -216,9 +216,9 @@ def poll_runpod(order_id: str, job_id: str):
         time.sleep(RUNPOD_POLL_INTERVAL_SECONDS)
         waited += RUNPOD_POLL_INTERVAL_SECONDS
 
-def runpod_submit(order_id: str, order_name: str, email: str):
+def runpod_submit(tok, name, email):
     if not supabase: return
-    res = supabase.table("video_jobs").select("*").eq("evs_token", order_id).single().execute()
+    res = supabase.table("video_jobs").select("*").eq("evs_token", tok).limit(1).execute()
     if not res.data: return
     row = res.data
 
