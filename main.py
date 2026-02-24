@@ -297,9 +297,11 @@ async def shopify_webhook(request: Request, bg: BackgroundTasks):
                 tok = prop.get("value")
                 if supabase:
                     supabase.table("video_jobs").upsert({
-                        "evs_token": tok, "status": "paid", "shopify_order_id": str(data.get("id")),
-                        "shopify_order_name": data.get("name"), "updated_at": now_iso()
-                    }).execute()
+    "evs_token": tok,
+    "status": "paid",
+    "shopify_order_id": str(data.get("id")),
+    "updated_at": now_iso()
+}).execute()
                 bg.add_task(runpod_submit, tok, data.get("name"), data.get("email"))
     return {"ok": True}
 
