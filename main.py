@@ -251,19 +251,39 @@ def health(): return {"status": "online", "v": "3.5-FIXED"}
 
 @app.post("/evs/order")
 async def receive_order(
-    email: str = Form(...), photo: UploadFile = File(...), audio: Optional[UploadFile] = File(None),
-    script_text: str = Form(""), gender: str = Form("male")
+    email: str = Form(...),
+    photo: UploadFile = File(...),
+    audio: Optional[UploadFile] = File(None),
+    script_text: str = Form(""),
+    gender: str = Form("male"),
+    evs_token: Optional[str] = Form(None),   # ✅ NEW: token riusabile
 ):
-    token = str(uuid.uuid4())
-    photo_url = upload_input_to_supabase(token, "photo", await photo.read(), "image/png")
-    audio_url = upload_input_to_supabase(token, "audio", await audio.read(), "audio/wav") if audio else None
+    # ✅ Se il client ci rimanda un token, riusiamo quello.
+    token = (evs_token or "").strip() or str(uuid.uuid4())
+
+    # Upload inputs (sempre x-upsert=true dentro upload_input_to_supabase)
+    photo_bytes = await photo.read()
+    photo_url = upload_input_to_supabase(token, "photo", photo_bytes, "image/png")
+
+    audio_url = None
+    if audio:
+        audio_bytes = await audio.read()
+        audio_url = upload_input_to_supabase(token, "audio", audio_bytes, "audio/wav")
 
     if supabase:
-        supabase.table("video_jobs").insert({
-            "evs_token": token, "customer_email": email, "status": "waiting_payment",
-            "gender": gender, "script_text": sanitize_text(script_text),
-            "photo_url": photo_url, "audio_url": audio_url, "has_audio": bool(audio_url)
+        # ✅ UPSERT: se esiste aggiorna, se non esiste crea.
+        supabase.table("video_jobs").upsert({
+            "evs_token": token,
+            "customer_email": email,
+            "status": "waiting_payment",
+            "gender": gender,
+            "script_text": sanitize_text(script_text),
+            "photo_url": photo_url,
+            "audio_url": audio_url,
+            "has_audio": bool(audio_url),
+            "updated_at": now_iso()
         }).execute()
+
     return {"ok": True, "evs_token": token}
 
 @app.post("/shopify/webhook")
