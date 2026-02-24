@@ -217,10 +217,19 @@ def poll_runpod(order_id: str, job_id: str):
         waited += RUNPOD_POLL_INTERVAL_SECONDS
 
 def runpod_submit(tok, name, email):
-    if not supabase: return
+    if not supabase:
+        return
+
+    # PRIMA (sbagliato):
+    # res = supabase.table("video_jobs").select("*").eq("evs_token", order_id).single().execute()
+
+    # DOPO (giusto e robusto):
     res = supabase.table("video_jobs").select("*").eq("evs_token", tok).limit(1).execute()
-    if not res.data: return
-    row = res.data
+    if not res.data:
+        print("⚠️ Nessuna riga trovata per evs_token:", tok)
+        return
+
+    row = res.data[0]
 
     payload = {
         "input": {
