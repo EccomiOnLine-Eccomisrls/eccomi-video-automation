@@ -248,13 +248,16 @@ async def receive_order(
     # Upload AUDIO su Supabase
     # =============================
     audio_url = None
-    if audio:
-        audio_bytes = await audio.read()
+
+if audio is not None:
+    audio_bytes = await audio.read()
+
+    if audio_bytes and len(audio_bytes) > 0:
         audio_url = upload_input_to_supabase(
             token,
-            "audio",
+            "audio.wav",
             audio_bytes,
-            audio.content_type or "audio/wav"
+            "audio/wav"
         )
 
     # =============================
