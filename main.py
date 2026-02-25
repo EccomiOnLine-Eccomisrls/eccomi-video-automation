@@ -78,16 +78,19 @@ def verify_hmac(request: Request, raw: bytes):
 # =====================================================
 # STORAGE
 # =====================================================
-def upload_input_to_supabase(token, kind, content, content_type):
+def upload_input_to_supabase(token, filename, content, content_type):
     if not supabase:
         return None
 
-    path = f"{token}/{kind}.dat"
+    path = f"{token}/{filename}"
 
     supabase.storage.from_(SUPABASE_INPUTS_BUCKET).upload(
         path=path,
         file=content,
-        file_options={"content-type": content_type, "x-upsert": "true"}
+        file_options={
+            "content-type": content_type,
+            "x-upsert": "true"
+        }
     )
 
     return supabase.storage.from_(SUPABASE_INPUTS_BUCKET).get_public_url(path)
