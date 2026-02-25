@@ -237,28 +237,31 @@ async def receive_order(
     # Upload FOTO su Supabase
     # =============================
     photo_bytes = await photo.read()
-    photo_url = upload_input_to_supabase(
-        token,
-        "photo",
-        photo_bytes,
-        photo.content_type or "image/png"
-    )
+
+    photo_url = None
+    if photo_bytes and len(photo_bytes) > 0:
+        photo_url = upload_input_to_supabase(
+            token,
+            "photo.png",
+            photo_bytes,
+            photo.content_type or "image/png"
+        )
 
     # =============================
     # Upload AUDIO su Supabase
     # =============================
     audio_url = None
 
-if audio is not None:
-    audio_bytes = await audio.read()
+    if audio is not None:
+        audio_bytes = await audio.read()
 
-    if audio_bytes and len(audio_bytes) > 0:
-        audio_url = upload_input_to_supabase(
-            token,
-            "audio.wav",
-            audio_bytes,
-            "audio/wav"
-        )
+        if audio_bytes and len(audio_bytes) > 0:
+            audio_url = upload_input_to_supabase(
+                token,
+                "audio.wav",
+                audio_bytes,
+                "audio/wav"
+            )
 
     # =============================
     # Salvataggio DB
@@ -272,11 +275,12 @@ if audio is not None:
             "script_text": sanitize_text(script_text),
             "photo_url": photo_url,
             "audio_url": audio_url,
+            "has_audio": bool(audio_url),
             "updated_at": now_iso()
         }).execute()
 
     # =============================
-    # RESPONSE COMPLETA
+    # RESPONSE
     # =============================
     return {
         "ok": True,
