@@ -301,7 +301,6 @@ async def shopify_webhook(request: Request, bg: BackgroundTasks):
     verify_hmac(request, raw)
 
     data = json.loads(raw.decode("utf-8"))
-
     financial_status = data.get("financial_status")
 
     for item in data.get("line_items", []):
@@ -315,13 +314,38 @@ async def shopify_webhook(request: Request, bg: BackgroundTasks):
 
                 if financial_status == "paid":
 
+                    # 🔎 1️⃣ Leggi stato attuale
+                    row = supabase.table("video_jobs") \
+                        .select("*") \
+                        .eq("evs_token", tok) \
+                        .single() \
+                        .execute()
+
+                    if not row.data:
+                        print("⚠️ Token non trovato:", tok)
+                        return {"ok": False}
+
+                    current_status = row.data.get("status")
+
+                    # 🛑 2️⃣ BLOCCO ANTI-DOPPIO AVVIO
+                    if current_status in ["processing", "completed"]:
+                        print("⛔ Job già avviato o completato:", tok)
+                        return {"ok": True}
+
+                    # 🔄 3️⃣ Aggiorna subito a processing
                     supabase.table("video_jobs").update({
-                        "status": "paid",
+                        "status": "processing",
                         "shopify_order_id": str(data.get("id")),
                         "updated_at": now_iso()
                     }).eq("evs_token", tok).execute()
 
-                    bg.add_task(runpod_submit, tok, data.get("name"), data.get("email"))
+                    # 🚀 4️⃣ Avvia RunPod
+                    bg.add_task(
+                        runpod_submit,
+                        tok,
+                        data.get("name"),
+                        data.get("email")
+                    )
 
     return {"ok": True}
 
