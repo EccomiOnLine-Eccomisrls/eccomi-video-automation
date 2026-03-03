@@ -231,25 +231,47 @@ async def receive_order(
     photo: UploadFile = File(...),
     audio: Optional[UploadFile] = File(None),
     script_text: str = Form(""),
-    gender: Optional[str] = Form(None),
+    gender: Optional[str] = Form(None, alias="properties[Voce]"),
     evs_token: Optional[str] = Form(None)
 ):
     token = (evs_token or "").strip() or str(uuid.uuid4())
 
     # ==================================================
-    # LOGICA VOCE UFFICIALE
+    # SANITIZE TESTO
     # ==================================================
     script_text = sanitize_text(script_text)
 
     has_audio = bool(audio and audio.filename)
 
+    # ==================================================
+    # CONVERSIONE VOCE SHOPIFY → GENDER TECNICO
+    # ==================================================
+    if gender:
+        g = gender.strip().lower()
+        if g in ["uomo", "male", "m"]:
+            gender = "male"
+        elif g in ["donna", "female", "f"]:
+            gender = "female"
+        else:
+            gender = None
+
+    # ==================================================
+    # LOGICA UFFICIALE EVS
+    # ==================================================
+
     # ❌ CASO 3: né testo né audio
     if not has_audio and not script_text:
-        raise HTTPException(status_code=400, detail="Inserisci un testo oppure carica un audio.")
+        raise HTTPException(
+            status_code=400,
+            detail="Inserisci un testo oppure carica un audio."
+        )
 
     # ❌ CASO 1: testo senza audio → voce obbligatoria
     if script_text and not has_audio and not gender:
-        raise HTTPException(status_code=400, detail="Se inserisci testo devi scegliere la voce.")
+        raise HTTPException(
+            status_code=400,
+            detail="Se inserisci testo devi scegliere la voce."
+        )
 
     # ✅ CASO 2: audio caricato → ignora testo e voce
     if has_audio:
@@ -257,10 +279,11 @@ async def receive_order(
         gender = None
 
     # ==================================================
-    # Upload FOTO (SEMPRE)
+    # UPLOAD FOTO (SEMPRE)
     # ==================================================
     photo_bytes = await photo.read()
     photo_url = None
+
     if photo_bytes:
         photo_url = upload_input_to_supabase(
             token,
@@ -270,38 +293,49 @@ async def receive_order(
         )
 
     # ==================================================
-    # Upload AUDIO (SOLO SE PRESENTE)
+    # UPLOAD AUDIO (SE PRESENTE)
     # ==================================================
     audio_url = None
+
     if has_audio:
         audio_bytes = await audio.read()
-        if audio_bytes:
-            audio_url = upload_input_to_supabase(
-                token,
-                "audio.wav",
-                audio_bytes,
-                "audio/wav"
+
+        # Mini blindatura server-side
+        if len(audio_bytes) < 100:
+            raise HTTPException(
+                status_code=400,
+                detail="File audio non valido o troppo piccolo."
             )
 
+        audio_url = upload_input_to_supabase(
+            token,
+            "audio.wav",
+            audio_bytes,
+            audio.content_type or "audio/wav"
+        )
+
     # ==================================================
-    # Salvataggio DB
+    # SALVATAGGIO DB
     # ==================================================
     if supabase:
         supabase.table("video_jobs").upsert({
             "evs_token": token,
             "customer_email": email,
             "status": "waiting_payment",
-            "gender": gender,                  # None se audio
-            "script_text": script_text,        # "" se audio
+            "gender": gender,
+            "script_text": script_text,
             "photo_url": photo_url,
             "audio_url": audio_url,
             "has_audio": bool(audio_url),
             "updated_at": now_iso()
         }).execute()
 
-    return {"ok": True, "evs_token": token, "photo_url": photo_url, "audio_url": audio_url}
-
-    return {"ok": True, "evs_token": token}
+    return {
+        "ok": True,
+        "evs_token": token,
+        "photo_url": photo_url,
+        "audio_url": audio_url
+    }
 
 @app.post("/shopify/webhook")
 async def shopify_webhook(request: Request, bg: BackgroundTasks):
