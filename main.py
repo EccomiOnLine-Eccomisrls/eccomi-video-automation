@@ -231,7 +231,7 @@ async def receive_order(
     photo: UploadFile = File(...),
     audio: Optional[UploadFile] = File(None),
     script_text: str = Form(""),
-    gender: Optional[str] = Form(None)
+    gender: Optional[str] = Form(None),
     evs_token: Optional[str] = Form(None)
 ):
     token = (evs_token or "").strip() or str(uuid.uuid4())
