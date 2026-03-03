@@ -323,38 +323,33 @@ async def shopify_webhook(request: Request, bg: BackgroundTasks):
 
                 if financial_status == "paid":
 
-                    # 🔎 1️⃣ Leggi stato attuale
-                    row = supabase.table("video_jobs") \
-                        .select("*") \
+                    # 🔎 Leggi stato attuale (SAFE)
+                    res = supabase.table("video_jobs") \
+                        .select("status") \
                         .eq("evs_token", tok) \
-                        .single() \
+                        .limit(1) \
                         .execute()
 
-                    if not row.data:
-                        print("⚠️ Token non trovato:", tok)
-                        return {"ok": False}
+                    if not res.data:
+                        print("⚠️ Token non trovato in video_jobs:", tok)
+                        return {"ok": True}
 
-                    current_status = row.data.get("status")
+                    current_status = (res.data[0].get("status") or "").lower()
 
-                    # 🛑 2️⃣ BLOCCO ANTI-DOPPIO AVVIO
-                    if current_status in ["processing", "completed"]:
+                    # 🛑 Anti doppio avvio
+                    if current_status in ["processing", "done"]:
                         print("⛔ Job già avviato o completato:", tok)
                         return {"ok": True}
 
-                    # 🔄 3️⃣ Aggiorna subito a processing
+                    # 🔄 Aggiorna a processing
                     supabase.table("video_jobs").update({
                         "status": "processing",
                         "shopify_order_id": str(data.get("id")),
                         "updated_at": now_iso()
                     }).eq("evs_token", tok).execute()
 
-                    # 🚀 4️⃣ Avvia RunPod
-                    bg.add_task(
-                        runpod_submit,
-                        tok,
-                        data.get("name"),
-                        data.get("email")
-                    )
+                    # 🚀 Avvia RunPod
+                    bg.add_task(runpod_submit, tok, data.get("name"), data.get("email"))
 
     return {"ok": True}
 
