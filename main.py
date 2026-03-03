@@ -236,6 +236,24 @@ async def receive_order(
 ):
     token = (evs_token or "").strip() or str(uuid.uuid4())
 
+# ==================================================
+# LOGICA VOCE COERENTE
+# ==================================================
+
+script_text = sanitize_text(script_text)
+
+has_audio = False
+if audio and audio.filename:
+    has_audio = True
+
+# Se c'è testo e NON c'è audio → voce obbligatoria
+if script_text and not has_audio and not gender:
+    raise HTTPException(status_code=400, detail="Se inserisci testo devi scegliere la voce")
+
+# Se c'è audio → ignoriamo la voce
+if has_audio:
+    gender = None
+
     # =============================
     # Upload FOTO su Supabase
     # =============================
