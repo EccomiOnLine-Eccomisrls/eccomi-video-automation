@@ -306,7 +306,7 @@ async def receive_order(
             "updated_at": now_iso()
         }).execute()
 
-    return {"ok": True, "evs_token": token, "photo_url": photo_url, "audio_url": audio_url}    }
+    return {"ok": True, "evs_token": token, "photo_url": photo_url, "audio_url": audio_url}
 
 @app.post("/shopify/webhook")
 async def shopify_webhook(request: Request, bg: BackgroundTasks):
