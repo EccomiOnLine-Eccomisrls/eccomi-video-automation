@@ -237,42 +237,31 @@ async def receive_order(
     token = (evs_token or "").strip() or str(uuid.uuid4())
 
     # ==================================================
-    # LOGICA VOCE DEFINITIVA
+    # LOGICA VOCE UFFICIALE
     # ==================================================
-
     script_text = sanitize_text(script_text)
 
-    has_audio = False
-    if audio and audio.filename:
-        has_audio = True
+    has_audio = bool(audio and audio.filename)
 
-    # ❌ CASO 3 → né testo né audio
+    # ❌ CASO 3: né testo né audio
     if not has_audio and not script_text:
-        raise HTTPException(
-            status_code=400,
-            detail="Inserisci un testo oppure carica un audio."
-        )
+        raise HTTPException(status_code=400, detail="Inserisci un testo oppure carica un audio.")
 
-    # ❌ CASO 1 → testo ma nessuna voce
+    # ❌ CASO 1: testo senza audio → voce obbligatoria
     if script_text and not has_audio and not gender:
-        raise HTTPException(
-            status_code=400,
-            detail="Se inserisci testo devi scegliere la voce."
-        )
+        raise HTTPException(status_code=400, detail="Se inserisci testo devi scegliere la voce.")
 
-    # ✅ CASO 2 → audio caricato
+    # ✅ CASO 2: audio caricato → ignora testo e voce
     if has_audio:
         script_text = ""
         gender = None
 
     # ==================================================
-    # Upload FOTO su Supabase
+    # Upload FOTO (SEMPRE)
     # ==================================================
-
     photo_bytes = await photo.read()
-
     photo_url = None
-    if photo_bytes and len(photo_bytes) > 0:
+    if photo_bytes:
         photo_url = upload_input_to_supabase(
             token,
             "photo.png",
@@ -281,13 +270,12 @@ async def receive_order(
         )
 
     # ==================================================
-    # Upload AUDIO su Supabase
+    # Upload AUDIO (SOLO SE PRESENTE)
     # ==================================================
-
     audio_url = None
     if has_audio:
         audio_bytes = await audio.read()
-        if audio_bytes and len(audio_bytes) > 0:
+        if audio_bytes:
             audio_url = upload_input_to_supabase(
                 token,
                 "audio.wav",
@@ -298,26 +286,20 @@ async def receive_order(
     # ==================================================
     # Salvataggio DB
     # ==================================================
-
     if supabase:
         supabase.table("video_jobs").upsert({
             "evs_token": token,
             "customer_email": email,
             "status": "waiting_payment",
-            "gender": gender,
-            "script_text": script_text,
+            "gender": gender,                  # None se audio
+            "script_text": script_text,        # "" se audio
             "photo_url": photo_url,
             "audio_url": audio_url,
             "has_audio": bool(audio_url),
             "updated_at": now_iso()
         }).execute()
 
-    return {
-        "ok": True,
-        "evs_token": token,
-        "photo_url": photo_url,
-        "audio_url": audio_url
-    }
+    return {"ok": True, "evs_token": token, "photo_url": photo_url, "audio_url": audio_url}
 
     return {"ok": True, "evs_token": token}
 
