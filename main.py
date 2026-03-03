@@ -236,80 +236,54 @@ async def receive_order(
 ):
     token = (evs_token or "").strip() or str(uuid.uuid4())
 
-    # ==================================================
-    # SANITIZE TESTO
-    # ==================================================
     script_text = sanitize_text(script_text)
-    print("DEBUG -> email:", email)
-print("DEBUG -> script_text:", script_text)
-print("DEBUG -> gender:", gender)
-print("DEBUG -> has_audio:", bool(audio and audio.filename))
-
     has_audio = bool(audio and audio.filename)
 
-    # ==================================================
-    # CONVERSIONE VOCE SHOPIFY → GENDER TECNICO
-    # ==================================================
+    # DEBUG
+    print("DEBUG -> email:", email)
+    print("DEBUG -> script_text:", script_text)
+    print("DEBUG -> gender raw:", gender)
+    print("DEBUG -> has_audio:", has_audio)
+
+    # NORMALIZZA GENDER
     if gender:
         g = gender.strip().lower()
-        if g in ["uomo", "male", "m"]:
+        if g in ["uomo", "male", "m", "maschio"]:
             gender = "male"
-        elif g in ["donna", "female", "f"]:
+        elif g in ["donna", "female", "f", "femmina"]:
             gender = "female"
         else:
             gender = None
 
-    # ==================================================
-    # LOGICA UFFICIALE EVS
-    # ==================================================
-
-    # ❌ CASO 3: né testo né audio
+    # LOGICA
     if not has_audio and not script_text:
-        raise HTTPException(
-            status_code=400,
-            detail="Inserisci un testo oppure carica un audio."
-        )
+        raise HTTPException(status_code=400, detail="Inserisci un testo oppure carica un audio.")
 
-    # ❌ CASO 1: testo senza audio → voce obbligatoria
     if script_text and not has_audio and not gender:
-        raise HTTPException(
-            status_code=400,
-            detail="Se inserisci testo devi scegliere la voce."
-        )
+        raise HTTPException(status_code=400, detail="Se inserisci testo devi scegliere la voce.")
 
-    # ✅ CASO 2: audio caricato → ignora testo e voce
     if has_audio:
         script_text = ""
         gender = None
 
-    # ==================================================
-    # UPLOAD FOTO (SEMPRE)
-    # ==================================================
+    # UPLOAD FOTO
     photo_bytes = await photo.read()
-    photo_url = None
+    if not photo_bytes:
+        raise HTTPException(status_code=400, detail="Foto mancante o non valida.")
 
-    if photo_bytes:
-        photo_url = upload_input_to_supabase(
-            token,
-            "photo.png",
-            photo_bytes,
-            photo.content_type or "image/png"
-        )
+    photo_url = upload_input_to_supabase(
+        token,
+        "photo.png",
+        photo_bytes,
+        photo.content_type or "image/png"
+    )
 
-    # ==================================================
-    # UPLOAD AUDIO (SE PRESENTE)
-    # ==================================================
+    # UPLOAD AUDIO (se presente)
     audio_url = None
-
     if has_audio:
         audio_bytes = await audio.read()
-
-        # Mini blindatura server-side
-        if len(audio_bytes) < 100:
-            raise HTTPException(
-                status_code=400,
-                detail="File audio non valido o troppo piccolo."
-            )
+        if not audio_bytes or len(audio_bytes) < 100:
+            raise HTTPException(status_code=400, detail="File audio non valido o troppo piccolo.")
 
         audio_url = upload_input_to_supabase(
             token,
@@ -318,9 +292,7 @@ print("DEBUG -> has_audio:", bool(audio and audio.filename))
             audio.content_type or "audio/wav"
         )
 
-    # ==================================================
-    # SALVATAGGIO DB
-    # ==================================================
+    # DB
     if supabase:
         supabase.table("video_jobs").upsert({
             "evs_token": token,
@@ -334,12 +306,7 @@ print("DEBUG -> has_audio:", bool(audio and audio.filename))
             "updated_at": now_iso()
         }).execute()
 
-    return {
-        "ok": True,
-        "evs_token": token,
-        "photo_url": photo_url,
-        "audio_url": audio_url
-    }
+    return {"ok": True, "evs_token": token, "photo_url": photo_url, "audio_url": audio_url}    }
 
 @app.post("/shopify/webhook")
 async def shopify_webhook(request: Request, bg: BackgroundTasks):
