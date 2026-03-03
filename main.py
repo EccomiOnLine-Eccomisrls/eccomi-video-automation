@@ -184,7 +184,7 @@ def runpod_submit(tok, name, email):
         "input": {
             "image_url": row.get("photo_url"),
             "text": sanitize_text(row.get("script_text")),
-            "gender": row.get("gender", "male"),
+            "gender": (row.get("gender") or "male"),
             "token": tok
         }
     }
