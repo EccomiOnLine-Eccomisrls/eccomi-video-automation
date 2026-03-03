@@ -240,6 +240,10 @@ async def receive_order(
     # SANITIZE TESTO
     # ==================================================
     script_text = sanitize_text(script_text)
+    print("DEBUG -> email:", email)
+print("DEBUG -> script_text:", script_text)
+print("DEBUG -> gender:", gender)
+print("DEBUG -> has_audio:", bool(audio and audio.filename))
 
     has_audio = bool(audio and audio.filename)
 
