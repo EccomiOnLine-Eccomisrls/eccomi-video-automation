@@ -259,8 +259,9 @@ async def receive_order(
     if not has_audio and not script_text:
         raise HTTPException(status_code=400, detail="Inserisci un testo oppure carica un audio.")
 
+    # ✅ CASO 1: testo senza audio → se non scelto, default male
     if script_text and not has_audio and not gender:
-        raise HTTPException(status_code=400, detail="Se inserisci testo devi scegliere la voce.")
+        gender = "male"
 
     if has_audio:
         script_text = ""
