@@ -587,3 +587,13 @@ def video_view(token: str):
 </body>
 </html>
 """)
+
+@app.get("/video/{token}/download")
+def video_download(token: str):
+
+    video_url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_VIDEOS_BUCKET}/{token}.mp4"
+
+    return RedirectResponse(
+        url=video_url,
+        status_code=302
+    )
