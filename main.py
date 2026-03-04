@@ -361,18 +361,117 @@ async def shopify_webhook(request: Request, bg: BackgroundTasks):
 
 @app.get("/video/{token}", response_class=HTMLResponse)
 def video_view(token: str):
+
+    video_stream = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_VIDEOS_BUCKET}/{token}.mp4"
     download_url = f"{PUBLIC_BASE_URL}/video/{token}/download"
+
     return HTMLResponse(f"""
-        <html>
-        <body style='background:#0b1b33;color:#fff;text-align:center;padding:50px;'>
-        <h1>🎬 Video Pronto</h1>
-        <br>
-        <a href='{download_url}' style='background:#fff;color:#0b1b33;padding:15px;text-decoration:none;font-weight:bold;border-radius:10px;'>
-        ⬇️ Scarica MP4
-        </a>
-        </body>
-        </html>
-    """)
+<html>
+<head>
+<title>Eccomi Video</title>
+
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<style>
+
+body {{
+    margin:0;
+    font-family:Arial, Helvetica, sans-serif;
+    background:#0b1b33;
+    color:white;
+    text-align:center;
+}}
+
+.container {{
+    max-width:900px;
+    margin:auto;
+    padding:40px 20px;
+}}
+
+h1 {{
+    font-size:32px;
+    margin-bottom:20px;
+}}
+
+.video-box {{
+    border-radius:14px;
+    overflow:hidden;
+    box-shadow:0 10px 40px rgba(0,0,0,0.6);
+}}
+
+video {{
+    width:100%;
+}}
+
+.actions {{
+    margin-top:25px;
+}}
+
+.btn {{
+    display:inline-block;
+    margin:10px;
+    padding:14px 22px;
+    border-radius:10px;
+    font-weight:bold;
+    text-decoration:none;
+}}
+
+.download {{
+    background:white;
+    color:#0b1b33;
+}}
+
+.share {{
+    background:#2d6cdf;
+    color:white;
+}}
+
+.footer {{
+    margin-top:40px;
+    opacity:0.6;
+    font-size:14px;
+}}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="container">
+
+<h1>🎬 Il tuo video è pronto</h1>
+
+<div class="video-box">
+
+<video controls autoplay>
+<source src="{video_stream}" type="video/mp4">
+</video>
+
+</div>
+
+<div class="actions">
+
+<a class="btn download" href="{download_url}">
+⬇ Scarica MP4
+</a>
+
+<a class="btn share" target="_blank"
+href="https://api.whatsapp.com/send?text=Guarda questo video! {PUBLIC_BASE_URL}/video/{token}">
+📲 Condividi su WhatsApp
+</a>
+
+</div>
+
+<div class="footer">
+Video generato con Eccomi Video Studio
+</div>
+
+</div>
+
+</body>
+</html>
+""")
 
 @app.get("/video/{token}/download")
 def video_download(token: str):
