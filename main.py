@@ -151,6 +151,9 @@ def poll_runpod(token: str, job_id: str):
 
             print(f"🔎 RunPod status {token}: {status}")
 
+            # =====================================
+            # JOB COMPLETATO
+            # =====================================
             if status == "COMPLETED":
 
                 output = data.get("output", {})
@@ -158,7 +161,8 @@ def poll_runpod(token: str, job_id: str):
 
                 if video_url:
 
-                    # scarica video RunPod
+                    print("⬇️ Scarico video RunPod...")
+
                     r = requests.get(video_url, timeout=600)
                     r.raise_for_status()
 
@@ -167,13 +171,16 @@ def poll_runpod(token: str, job_id: str):
                     with open(local_file, "wb") as f:
                         f.write(r.content)
 
-                    # crea versione verticale
+                    print("🎬 Creo versione verticale Reel...")
+
                     reel_file = create_vertical_video(token)
 
-                    # upload video originale
+                    print("☁️ Upload video originale...")
+
                     supa_url = upload_video_to_supabase(token, video_url)
 
-                    # upload versione verticale
+                    print("☁️ Upload video verticale...")
+
                     reel_name = f"{token}_reel.mp4"
 
                     with open(reel_file, "rb") as f:
@@ -200,9 +207,12 @@ def poll_runpod(token: str, job_id: str):
 
                     return
 
+            # =====================================
+            # JOB FALLITO
+            # =====================================
             if status in ["FAILED", "CANCELLED"]:
 
-                print("❌ RunPod job failed:", token)
+                print("❌ RunPod job fallito:", token)
 
                 supabase.table("video_jobs").update({
                     "status": "failed"
