@@ -14,7 +14,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 
 from supabase import create_client, Client
 
@@ -376,5 +376,15 @@ def video_view(token: str):
 
 @app.get("/video/{token}/download")
 def video_download(token: str):
-    url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_VIDEOS_BUCKET}/{token}.mp4"
-    return RedirectResponse(url=url)
+
+    video_url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_VIDEOS_BUCKET}/{token}.mp4"
+
+    r = requests.get(video_url)
+
+    return Response(
+        content=r.content,
+        media_type="video/mp4",
+        headers={
+            "Content-Disposition": f'attachment; filename="eccomi-video-{token}.mp4"'
+        }
+    )
