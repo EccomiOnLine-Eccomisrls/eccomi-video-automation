@@ -7,6 +7,7 @@ import json
 import requests
 import uuid
 import re
+import subprocess
 
 from typing import Optional, Dict, Any
 from datetime import datetime
@@ -111,6 +112,24 @@ def upload_video_to_supabase(token, source_url):
     )
 
     return supabase.storage.from_(SUPABASE_VIDEOS_BUCKET).get_public_url(file_name)
+
+def create_vertical_video(token):
+
+    input_file = f"/tmp/{token}.mp4"
+    output_file = f"/tmp/{token}_reel.mp4"
+
+    cmd = [
+        "ffmpeg",
+        "-i", input_file,
+        "-vf",
+        "scale=1080:1080,pad=1080:1920:0:420:black",
+        "-c:a", "copy",
+        output_file
+    ]
+
+    subprocess.run(cmd, check=True)
+
+    return output_file
 
 # =====================================================
 # RUNPOD
