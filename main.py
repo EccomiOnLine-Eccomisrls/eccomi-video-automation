@@ -157,7 +157,35 @@ def poll_runpod(token: str, job_id: str):
                 video_url = output.get("video_url") or output.get("url")
 
                 if video_url:
+
+                    # scarica video RunPod
+                    r = requests.get(video_url, timeout=600)
+                    r.raise_for_status()
+
+                    local_file = f"/tmp/{token}.mp4"
+
+                    with open(local_file, "wb") as f:
+                        f.write(r.content)
+
+                    # crea versione verticale
+                    reel_file = create_vertical_video(token)
+
+                    # upload video originale
                     supa_url = upload_video_to_supabase(token, video_url)
+
+                    # upload versione verticale
+                    reel_name = f"{token}_reel.mp4"
+
+                    with open(reel_file, "rb") as f:
+                        supabase.storage.from_(SUPABASE_VIDEOS_BUCKET).upload(
+                            path=reel_name,
+                            file=f.read(),
+                            file_options={
+                                "content-type": "video/mp4",
+                                "x-upsert": "true"
+                            }
+                        )
+
                     delivery_page = f"{PUBLIC_BASE_URL}/video/{token}"
 
                     supabase.table("video_jobs").update({
@@ -168,12 +196,18 @@ def poll_runpod(token: str, job_id: str):
                         "updated_at": now_iso()
                     }).eq("evs_token", token).execute()
 
+                    print("✅ Video completato:", token)
+
                     return
 
             if status in ["FAILED", "CANCELLED"]:
+
+                print("❌ RunPod job failed:", token)
+
                 supabase.table("video_jobs").update({
                     "status": "failed"
                 }).eq("evs_token", token).execute()
+
                 return
 
         except Exception as e:
@@ -181,6 +215,7 @@ def poll_runpod(token: str, job_id: str):
 
         time.sleep(RUNPOD_POLL_INTERVAL_SECONDS)
         waited += RUNPOD_POLL_INTERVAL_SECONDS
+
 
 
 def runpod_submit(tok, name, email):
@@ -226,6 +261,9 @@ def runpod_submit(tok, name, email):
     job_id = r.json().get("id")
 
     if job_id:
+
+        print("🧠 RunPod job avviato:", job_id)
+
         supabase.table("video_jobs").update({
             "status": "processing",
             "runpod_job_id": job_id,
