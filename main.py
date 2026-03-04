@@ -433,6 +433,7 @@ def video_view(token: str):
 
     # stream diretto (apre e riproduce)
     video_stream = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_VIDEOS_BUCKET}/{token}.mp4"
+    reel_stream = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_VIDEOS_BUCKET}/{token}_reel.mp4"
 
     return HTMLResponse(f"""
 <!doctype html>
@@ -635,6 +636,9 @@ def video_view(token: str):
     <div class="actions">
       <a class="btn btn-download" href="{download_url}" download="eccomi-video-{token}.mp4">
 ⬇ Scarica MP4
+</a>
+    <a class="btn btn-download" href="{reel_stream}" download="eccomi-reel-{token}.mp4">
+📱 Scarica versione Reel
 </a>
 
       <a class="btn btn-whatsapp"
