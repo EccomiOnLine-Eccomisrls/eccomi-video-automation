@@ -560,7 +560,9 @@ def video_view(token: str):
     <div class="note">Video generato con Intelligenza Artificiale • MP4</div>
 
     <div class="actions">
-      <a class="btn btn-download" href="{download_url}">⬇ Scarica MP4</a>
+      <a class="btn btn-download" href="{download_url}" download="eccomi-video-{token}.mp4">
+⬇ Scarica MP4
+</a>
 
       <a class="btn btn-whatsapp"
          href="https://api.whatsapp.com/send?text=Guarda%20questo%20video!%20{PUBLIC_BASE_URL}/video/{token}">
