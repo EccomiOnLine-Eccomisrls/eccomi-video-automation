@@ -368,68 +368,90 @@ def video_view(token: str):
     return HTMLResponse(f"""
 <html>
 <head>
-<title>Eccomi Video</title>
+
+<title>Eccomi Video Studio</title>
 
 <meta name="viewport" content="width=device-width, initial-scale=1">
 
 <style>
 
 body {{
-    margin:0;
-    font-family:Arial, Helvetica, sans-serif;
-    background:#0b1b33;
-    color:white;
-    text-align:center;
+margin:0;
+font-family:Arial, Helvetica, sans-serif;
+background:#0b1b33;
+color:white;
+text-align:center;
 }}
 
 .container {{
-    max-width:900px;
-    margin:auto;
-    padding:40px 20px;
+max-width:900px;
+margin:auto;
+padding:40px 20px;
+}}
+
+.logo {{
+font-size:14px;
+opacity:0.7;
+margin-bottom:10px;
 }}
 
 h1 {{
-    font-size:32px;
-    margin-bottom:20px;
+font-size:32px;
+margin-bottom:20px;
 }}
 
 .video-box {{
-    border-radius:14px;
-    overflow:hidden;
-    box-shadow:0 10px 40px rgba(0,0,0,0.6);
+border-radius:14px;
+overflow:hidden;
+box-shadow:0 10px 40px rgba(0,0,0,0.6);
 }}
 
 video {{
-    width:100%;
+width:100%;
 }}
 
 .actions {{
-    margin-top:25px;
+margin-top:30px;
 }}
 
 .btn {{
-    display:inline-block;
-    margin:10px;
-    padding:14px 22px;
-    border-radius:10px;
-    font-weight:bold;
-    text-decoration:none;
+display:inline-block;
+margin:10px;
+padding:14px 22px;
+border-radius:10px;
+font-weight:bold;
+text-decoration:none;
 }}
 
 .download {{
-    background:white;
-    color:#0b1b33;
+background:white;
+color:#0b1b33;
 }}
 
-.share {{
-    background:#2d6cdf;
-    color:white;
+.whatsapp {{
+background:#25D366;
+color:white;
+}}
+
+.instagram {{
+background:#E1306C;
+color:white;
+}}
+
+.tiktok {{
+background:black;
+color:white;
+}}
+
+.create {{
+background:#2d6cdf;
+color:white;
 }}
 
 .footer {{
-    margin-top:40px;
-    opacity:0.6;
-    font-size:14px;
+margin-top:40px;
+opacity:0.6;
+font-size:14px;
 }}
 
 </style>
@@ -439,6 +461,10 @@ video {{
 <body>
 
 <div class="container">
+
+<div class="logo">
+Creato con Eccomi Video Studio
+</div>
 
 <h1>🎬 Il tuo video è pronto</h1>
 
@@ -456,15 +482,33 @@ video {{
 ⬇ Scarica MP4
 </a>
 
-<a class="btn share" target="_blank"
+<a class="btn whatsapp"
 href="https://api.whatsapp.com/send?text=Guarda questo video! {PUBLIC_BASE_URL}/video/{token}">
 📲 Condividi su WhatsApp
+</a>
+
+<a class="btn instagram"
+href="https://www.instagram.com/">
+📸 Pubblica su Instagram
+</a>
+
+<a class="btn tiktok"
+href="https://www.tiktok.com/">
+🎵 Usa su TikTok
+</a>
+
+<br>
+
+<a class="btn create"
+href="https://eccomionline.com/products/video-ai-da-foto-parlante">
+✨ Crea un altro video
 </a>
 
 </div>
 
 <div class="footer">
-Video generato con Eccomi Video Studio
+Vuoi creare anche tu video AI da una foto?<br>
+👉 eccomionline.com
 </div>
 
 </div>
@@ -472,18 +516,3 @@ Video generato con Eccomi Video Studio
 </body>
 </html>
 """)
-
-@app.get("/video/{token}/download")
-def video_download(token: str):
-
-    video_url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_VIDEOS_BUCKET}/{token}.mp4"
-
-    r = requests.get(video_url)
-
-    return Response(
-        content=r.content,
-        media_type="video/mp4",
-        headers={
-            "Content-Disposition": f'attachment; filename="eccomi-video-{token}.mp4"'
-        }
-    )
