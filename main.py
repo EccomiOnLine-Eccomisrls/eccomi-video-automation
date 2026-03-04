@@ -569,10 +569,6 @@ def video_view(token: str):
          📲 WhatsApp
       </a>
 
-      <a class="btn btn-instagram" href="https://www.instagram.com/">📸 Instagram</a>
-      <a class="btn btn-tiktok" href="https://www.tiktok.com/">🎵 TikTok</a>
-    </div>
-
     <div class="actions" style="margin-top:14px;">
       <a class="btn btn-create" href="https://eccomionline.com/products/video-ai-da-foto-parlante">
         ✨ Crea un altro video
