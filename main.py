@@ -447,7 +447,9 @@ def video_view(token: str):
 <meta property="og:description" content="Guarda questo video AI creato da una foto.">
 <meta property="og:type" content="video.other">
 <meta property="og:url" content="{PUBLIC_BASE_URL}/video/{token}">
-<meta property="og:image" content="{video_stream}">
+<meta property="og:image" content="{reel_stream}">
+<meta property="og:video" content="{video_stream}">
+<meta property="og:video:type" content="video/mp4">
 
   <style>
     :root {{
