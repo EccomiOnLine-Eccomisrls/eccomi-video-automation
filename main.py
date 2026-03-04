@@ -371,9 +371,15 @@ def video_view(token: str):
 <!doctype html>
 <html lang="it">
 <head>
-  <meta charset="utf-8">
-  <title>Eccomi Video Studio</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta charset="utf-8">
+<title>Eccomi Video Studio</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<meta property="og:title" content="🎬 Video creato con Eccomi Video Studio">
+<meta property="og:description" content="Guarda questo video AI creato da una foto.">
+<meta property="og:type" content="video.other">
+<meta property="og:url" content="{PUBLIC_BASE_URL}/video/{token}">
+<meta property="og:image" content="{video_stream}">
 
   <style>
     :root {{
