@@ -361,158 +361,227 @@ async def shopify_webhook(request: Request, bg: BackgroundTasks):
 
 @app.get("/video/{token}", response_class=HTMLResponse)
 def video_view(token: str):
-
-    video_stream = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_VIDEOS_BUCKET}/{token}.mp4"
+    # link download (rimane uguale)
     download_url = f"{PUBLIC_BASE_URL}/video/{token}/download"
 
+    # stream diretto (apre e riproduce)
+    video_stream = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_VIDEOS_BUCKET}/{token}.mp4"
+
     return HTMLResponse(f"""
-<html>
+<!doctype html>
+<html lang="it">
 <head>
+  <meta charset="utf-8">
+  <title>Eccomi Video Studio</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
 
-<title>Eccomi Video Studio</title>
+  <style>
+    :root {{
+      --bg1:#173b86;
+      --bg2:#0b1b33;
+      --card: rgba(255,255,255,0.06);
+      --stroke: rgba(255,255,255,0.10);
+      --text: #ffffff;
+      --muted: rgba(255,255,255,0.72);
+      --shadow: rgba(0,0,0,0.65);
+      --brand: #e62e2d;
+    }}
 
-<meta name="viewport" content="width=device-width, initial-scale=1">
+    * {{ box-sizing:border-box; }}
 
-<style>
+    body {{
+      margin:0;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(1100px 500px at 50% 0%, rgba(23,59,134,0.95) 0%, rgba(11,27,51,1) 55%),
+        radial-gradient(900px 420px at 10% 20%, rgba(230,46,45,0.20) 0%, rgba(0,0,0,0) 60%),
+        radial-gradient(900px 420px at 90% 35%, rgba(62,224,140,0.12) 0%, rgba(0,0,0,0) 55%),
+        linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 60%);
+      min-height:100vh;
+    }}
 
-body {{
-margin:0;
-font-family:Arial, Helvetica, sans-serif;
-background:#0b1b33;
-color:white;
-text-align:center;
-}}
+    .container {{
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 36px 16px 44px;
+      text-align:center;
+    }}
 
-.container {{
-max-width:900px;
-margin:auto;
-padding:40px 20px;
-}}
+    .brand {{
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      gap:10px;
+      margin-bottom: 10px;
+    }}
 
-.logo {{
-font-size:14px;
-opacity:0.7;
-margin-bottom:10px;
-}}
+    .brand-badge {{
+      width:10px;height:10px;border-radius:999px;
+      background: var(--brand);
+      box-shadow: 0 0 18px rgba(230,46,45,0.6);
+    }}
 
-h1 {{
-font-size:32px;
-margin-bottom:20px;
-}}
+    .brand-text {{
+      font-size: 13px;
+      letter-spacing: .2px;
+      color: var(--muted);
+    }}
 
-.video-box {{
-border-radius:14px;
-overflow:hidden;
-box-shadow:0 10px 40px rgba(0,0,0,0.6);
-}}
+    h1 {{
+      margin: 10px 0 8px;
+      font-size: 30px;
+      line-height: 1.15;
+    }}
 
-video {{
-width:100%;
-}}
+    .sub {{
+      margin: 0 auto 22px;
+      max-width: 720px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+    }}
 
-.actions {{
-margin-top:30px;
-}}
+    .video-wrap {{
+      background: var(--card);
+      border: 1px solid var(--stroke);
+      border-radius: 18px;
+      overflow: hidden;
+      box-shadow: 0 30px 80px var(--shadow);
+      backdrop-filter: blur(10px);
+    }}
 
-.btn {{
-display:inline-block;
-margin:10px;
-padding:14px 22px;
-border-radius:10px;
-font-weight:bold;
-text-decoration:none;
-}}
+    video {{
+      width:100%;
+      height:auto;
+      display:block;
+      background:#000;
+    }}
 
-.download {{
-background:white;
-color:#0b1b33;
-}}
+    .note {{
+      margin-top: 14px;
+      font-size: 12.5px;
+      color: var(--muted);
+    }}
 
-.whatsapp {{
-background:#25D366;
-color:white;
-}}
+    .actions {{
+      margin-top: 22px;
+      display:flex;
+      flex-wrap:wrap;
+      justify-content:center;
+      gap:12px;
+    }}
 
-.instagram {{
-background:#E1306C;
-color:white;
-}}
+    .btn {{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      gap:8px;
+      padding: 13px 18px;
+      border-radius: 12px;
+      font-weight: 700;
+      text-decoration:none;
+      border: 1px solid rgba(255,255,255,0.12);
+      transition: transform .20s ease, box-shadow .20s ease, opacity .20s ease;
+      will-change: transform;
+      user-select:none;
+      min-width: 170px;
+    }}
 
-.tiktok {{
-background:black;
-color:white;
-}}
+    .btn:hover {{
+      transform: translateY(-2px);
+      box-shadow: 0 14px 28px rgba(0,0,0,0.35);
+    }}
 
-.create {{
-background:#2d6cdf;
-color:white;
-}}
+    .btn:active {{
+      transform: translateY(0px);
+      opacity: .95;
+    }}
 
-.footer {{
-margin-top:40px;
-opacity:0.6;
-font-size:14px;
-}}
+    .btn-download {{
+      background: #ffffff;
+      color: #0b1b33;
+    }}
 
-</style>
+    .btn-whatsapp {{
+      background: #25D366;
+      color: #0b1b33;
+    }}
 
+    .btn-instagram {{
+      background: #E1306C;
+      color: #ffffff;
+    }}
+
+    .btn-tiktok {{
+      background: #111111;
+      color: #ffffff;
+    }}
+
+    .btn-create {{
+      background: #2d6cdf;
+      color: #ffffff;
+      border: 1px solid rgba(255,255,255,0.16);
+      min-width: 220px;
+    }}
+
+    .footer {{
+      margin-top: 30px;
+      color: rgba(255,255,255,0.55);
+      font-size: 13px;
+      line-height: 1.4;
+    }}
+
+    @media (max-width: 520px) {{
+      h1 {{ font-size: 26px; }}
+      .btn {{ min-width: 100%; }}
+    }}
+  </style>
 </head>
 
 <body>
+  <div class="container">
+    <div class="brand">
+      <span class="brand-badge"></span>
+      <div class="brand-text">Creato con Eccomi Video Studio</div>
+    </div>
 
-<div class="container">
+    <h1>🎬 Il tuo video è pronto</h1>
+    <div class="sub">
+      Puoi guardarlo subito qui sotto, scaricarlo in MP4 oppure condividerlo.
+    </div>
 
-<div class="logo">
-Creato con Eccomi Video Studio
-</div>
+    <div class="video-wrap">
+      <video controls autoplay playsinline preload="metadata">
+        <source src="{video_stream}" type="video/mp4">
+      </video>
+    </div>
 
-<h1>🎬 Il tuo video è pronto</h1>
+    <div class="note">Video generato con Intelligenza Artificiale • MP4</div>
 
-<div class="video-box">
+    <div class="actions">
+      <a class="btn btn-download" href="{download_url}">⬇ Scarica MP4</a>
 
-<video controls autoplay>
-<source src="{video_stream}" type="video/mp4">
-</video>
+      <a class="btn btn-whatsapp"
+         href="https://api.whatsapp.com/send?text=Guarda%20questo%20video!%20{PUBLIC_BASE_URL}/video/{token}">
+         📲 WhatsApp
+      </a>
 
-</div>
+      <a class="btn btn-instagram" href="https://www.instagram.com/">📸 Instagram</a>
+      <a class="btn btn-tiktok" href="https://www.tiktok.com/">🎵 TikTok</a>
+    </div>
 
-<div class="actions">
+    <div class="actions" style="margin-top:14px;">
+      <a class="btn btn-create" href="https://eccomionline.com/products/video-ai-da-foto-parlante">
+        ✨ Crea un altro video
+      </a>
+    </div>
 
-<a class="btn download" href="{download_url}">
-⬇ Scarica MP4
-</a>
-
-<a class="btn whatsapp"
-href="https://api.whatsapp.com/send?text=Guarda questo video! {PUBLIC_BASE_URL}/video/{token}">
-📲 Condividi su WhatsApp
-</a>
-
-<a class="btn instagram"
-href="https://www.instagram.com/">
-📸 Pubblica su Instagram
-</a>
-
-<a class="btn tiktok"
-href="https://www.tiktok.com/">
-🎵 Usa su TikTok
-</a>
-
-<br>
-
-<a class="btn create"
-href="https://eccomionline.com/products/video-ai-da-foto-parlante">
-✨ Crea un altro video
-</a>
-
-</div>
-
-<div class="footer">
-Vuoi creare anche tu video AI da una foto?<br>
-👉 eccomionline.com
-</div>
-
-</div>
-
+    <div class="footer">
+      Vuoi creare anche tu un video parlante da una foto?<br>
+      👉 eccomionline.com
+    </div>
+  </div>
 </body>
 </html>
 """)
