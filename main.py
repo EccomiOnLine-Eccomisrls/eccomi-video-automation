@@ -211,6 +211,70 @@ def poll_runpod(token: str, job_id: str):
         time.sleep(RUNPOD_POLL_INTERVAL_SECONDS)
         waited += RUNPOD_POLL_INTERVAL_SECONDS
 
+def runpod_submit(tok, name, email):
+
+    print("🚀 runpod_submit start:", tok)
+
+    if not supabase:
+        print("❌ Supabase non configurato")
+        return
+
+    res = supabase.table("video_jobs").select("*").eq("evs_token", tok).limit(1).execute()
+
+    if not res.data:
+        print("⚠️ Nessuna riga trovata per token:", tok)
+        return
+
+    row = res.data[0]
+
+    plan = normalize_plan(row.get("plan"))
+
+    payload = {
+        "input": {
+            "image_url": row.get("photo_url"),
+            "text": sanitize_text(row.get("script_text")),
+            "gender": (row.get("gender") or "male"),
+            "audio_url": row.get("audio_url"),
+            "token": tok,
+            "plan": plan
+        }
+    }
+
+    headers = {
+        "Authorization": f"Bearer {RUNPOD_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    r = requests.post(
+        f"https://api.runpod.ai/v2/{RUNPOD_ENDPOINT_ID}/run",
+        headers=headers,
+        json=payload,
+        timeout=45
+    )
+
+    job_id = (r.json() or {}).get("id")
+
+    if job_id:
+
+        print("🧠 RunPod job avviato:", job_id)
+
+        supabase.table("video_jobs").update({
+            "status": "processing",
+            "runpod_job_id": job_id,
+            "updated_at": now_iso()
+        }).eq("evs_token", tok).execute()
+
+        poll_runpod(tok, job_id)
+
+    else:
+
+        print("❌ RunPod submit senza job_id:", r.text)
+
+        supabase.table("video_jobs").update({
+            "status": "failed",
+            "updated_at": now_iso()
+        }).eq("evs_token", tok).execute()
+
 # =====================================================
 # FASTAPI
 # =====================================================
