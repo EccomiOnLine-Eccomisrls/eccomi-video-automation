@@ -153,40 +153,34 @@ def poll_runpod(token: str, job_id: str):
             print(f"🔎 RunPod status {token}: {status}")
 
             if status == "COMPLETED":
-                output = data.get("output", {}) or {}
-                video_url = output.get("video_url") or output.get("url")
+    output = data.get("output", {}) or {}
+    video_url = output.get("video_url") or output.get("url")
 
-                if not video_url:
-                    print("❌ COMPLETED ma senza video_url:", output)
-                    if supabase:
-                        supabase.table("video_jobs").update({
-                            "status": "failed",
-                            "updated_at": now_iso()
-                        }).eq("evs_token", token).execute()
-                    return
+    if not video_url:
+        print("❌ COMPLETED ma senza video_url:", output)
+        if supabase:
+            supabase.table("video_jobs").update({
+                "status": "failed",
+                "updated_at": now_iso()
+            }).eq("evs_token", token).execute()
+        return
 
-                output = data.get("output", {}) or {}
-video_url = output.get("video_url") or output.get("url")
+    print("✅ Video ricevuto da RunPod:", video_url)
 
-if not video_url:
-    print("❌ COMPLETED ma senza video_url:", output)
+    delivery_page = f"{PUBLIC_BASE_URL}/video/{token}"
+
+    if supabase:
+        supabase.table("video_jobs").update({
+            "status": "done",
+            "video_url": delivery_page,
+            "video_supabase_url": video_url,
+            "runpod_job_id": job_id,
+            "updated_at": now_iso()
+        }).eq("evs_token", token).execute()
+
+    print("✅ Supabase aggiornato:", token)
+
     return
-
-print("✅ Video ricevuto da RunPod:", video_url)
-
-delivery_page = f"{PUBLIC_BASE_URL}/video/{token}"
-
-supabase.table("video_jobs").update({
-    "status": "done",
-    "video_url": delivery_page,
-    "video_supabase_url": video_url,
-    "runpod_job_id": job_id,
-    "updated_at": now_iso()
-}).eq("evs_token", token).execute()
-
-print("✅ Supabase aggiornato:", token)
-
-return
 
                 delivery_page = f"{PUBLIC_BASE_URL}/video/{token}"
 
