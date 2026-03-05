@@ -165,24 +165,28 @@ def poll_runpod(token: str, job_id: str):
                         }).eq("evs_token", token).execute()
                     return
 
-                # Scarica mp4 (da Supabase o dove lo ha messo il worker)
-                print("⬇️ Scarico video finale...")
-                rr = requests.get(video_url, timeout=600)
-                rr.raise_for_status()
+                output = data.get("output", {}) or {}
+video_url = output.get("video_url") or output.get("url")
 
-                local_file = f"/tmp/{token}.mp4"
-                with open(local_file, "wb") as f:
-                    f.write(rr.content)
+if not video_url:
+    print("❌ COMPLETED ma senza video_url:", output)
+    return
 
-                # Crea Reel
-                print("🎬 Creo versione verticale Reel...")
-                reel_file = create_vertical_video(token)
+print("✅ Video ricevuto da RunPod:", video_url)
 
-                # Upload Reel su Supabase (root bucket: token_reel.mp4)
-                reel_name = f"{token}_reel.mp4"
-                with open(reel_file, "rb") as f:
-                    reel_bytes = f.read()
-                reel_public = upload_video_to_supabase_object(reel_name, reel_bytes)
+delivery_page = f"{PUBLIC_BASE_URL}/video/{token}"
+
+supabase.table("video_jobs").update({
+    "status": "done",
+    "video_url": delivery_page,
+    "video_supabase_url": video_url,
+    "runpod_job_id": job_id,
+    "updated_at": now_iso()
+}).eq("evs_token", token).execute()
+
+print("✅ Supabase aggiornato:", token)
+
+return
 
                 delivery_page = f"{PUBLIC_BASE_URL}/video/{token}"
 
