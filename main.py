@@ -283,29 +283,29 @@ def poll_runpod(token: str, job_id: str):
                         except Exception as e:
                             print("⚠️ Errore reel:", repr(e))
 
-# ===============================
-# UPDATE SUPABASE TABLE
-# ===============================
-if supabase:
-    payload = {
-        "status": "done",
-        "video_url": delivery_page or None,
-        "video_supabase_url": video_url,
-        "runpod_job_id": job_id,
-        "updated_at": now_iso(),
-        "processing_seconds": int(time.time() - started),
-    }
+                # ===============================
+                # UPDATE SUPABASE TABLE
+                # ===============================
+                if supabase:
+                    payload = {
+                        "status": "done",
+                        "video_url": delivery_page or None,
+                        "video_supabase_url": video_url,
+                        "runpod_job_id": job_id,
+                        "updated_at": now_iso(),
+                        "processing_seconds": int(time.time() - started),
+                    }
 
-    if reel_public_url:
-        payload["reel_supabase_url"] = reel_public_url
+                    if reel_public_url:
+                        payload["reel_supabase_url"] = reel_public_url
 
-    response = supabase.table("video_jobs").update(payload).eq("evs_token", token).execute()
+                    response = supabase.table("video_jobs").update(payload).eq("evs_token", token).execute()
 
-    print("🔧 Supabase update response:", response)
+                    print("🔧 Supabase update response:", response)
 
-print("✅ Supabase aggiornato:", token)
+                print("✅ Supabase aggiornato:", token)
                 return
-
+                
             # ===============================
             # FAILED / CANCELLED
             # ===============================
