@@ -256,7 +256,7 @@ def runpod_submit(token):
             "image_url": row.get("photo_url"),
             "audio_url": row.get("audio_url"),
             "text": sanitize_text(row.get("script_text")),
-            "gender": None if row.get("audio_url") else gender
+            "gender": gender
         }
     }
 
