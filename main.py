@@ -26,6 +26,7 @@ SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 
 RUNPOD_API_KEY = os.getenv("RUNPOD_API_KEY", "")
 RUNPOD_ENDPOINT_ID = os.getenv("RUNPOD_ENDPOINT_ID", "")
+RUNPOD_PREVIEW_ENDPOINT_ID = os.getenv("RUNPOD_PREVIEW_ENDPOINT_ID", "")
 
 SHOPIFY_WEBHOOK_SECRET = os.getenv("SHOPIFY_WEBHOOK_SECRET", "")
 VERIFY_SHOPIFY_HMAC = os.getenv("VERIFY_SHOPIFY_HMAC", "false").lower() == "true"
@@ -395,7 +396,7 @@ async def evs_preview(photo: UploadFile = File(...)):
 
     try:
 
-        url = f"https://api.runpod.ai/v2/{RUNPOD_ENDPOINT_ID}/run"
+        url = f"https://api.runpod.ai/v2/{RUNPOD_PREVIEW_ENDPOINT_ID}/run"
 
         r = http_request_with_retries(
             "POST",
@@ -417,7 +418,7 @@ async def evs_preview(photo: UploadFile = File(...)):
 
         while True:
 
-            status_url = f"https://api.runpod.ai/v2/{RUNPOD_ENDPOINT_ID}/status/{job_id}"
+            status_url = f"https://api.runpod.ai/v2/{RUNPOD_PREVIEW_ENDPOINT_ID}/status/{job_id}"
 
             r = http_request_with_retries(
                 "GET",
