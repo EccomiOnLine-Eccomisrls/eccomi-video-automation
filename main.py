@@ -388,11 +388,14 @@ async def evs_preview(photo: UploadFile = File(...)):
         raise HTTPException(500, "Upload foto fallito")
 
     payload = {
-        "input": {
-            "mode": "preview",
-            "image_url": photo_url
-        }
+    "input": {
+        "mode": "preview",
+        "image_url": photo_url,
+        "text": "Preview video",
+        "gender": "male",
+        "plan": "base"
     }
+}
 
     try:
 
