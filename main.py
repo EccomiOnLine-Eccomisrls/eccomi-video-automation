@@ -365,6 +365,100 @@ async def receive_order(
 
     return JSONResponse({"ok": True, "evs_token": token})
 
+# =====================================================
+# AI PREVIEW
+# =====================================================
+
+@app.post("/evs/preview")
+async def evs_preview(photo: UploadFile = File(...)):
+
+    token = str(uuid.uuid4())
+
+    photo_bytes = await photo.read()
+
+    photo_url = upload_input_to_supabase(
+        token,
+        "preview_photo.png",
+        photo_bytes,
+        photo.content_type or "image/png"
+    )
+
+    if not photo_url:
+        raise HTTPException(500, "Upload foto fallito")
+
+    payload = {
+        "input": {
+            "mode": "preview",
+            "image_url": photo_url
+        }
+    }
+
+    try:
+
+        url = f"https://api.runpod.ai/v2/{RUNPOD_ENDPOINT_ID}/run"
+
+        r = http_request_with_retries(
+            "POST",
+            url,
+            headers={"Authorization": f"Bearer {RUNPOD_API_KEY}"},
+            json=payload,
+            timeout=45
+        )
+
+        data = r.json()
+
+        job_id = data.get("id")
+
+        if not job_id:
+            raise HTTPException(500, "RunPod job_id mancante")
+
+        # polling veloce preview
+        start = time.time()
+
+        while True:
+
+            status_url = f"https://api.runpod.ai/v2/{RUNPOD_ENDPOINT_ID}/status/{job_id}"
+
+            r = http_request_with_retries(
+                "GET",
+                status_url,
+                headers={"Authorization": f"Bearer {RUNPOD_API_KEY}"},
+                timeout=HTTP_TIMEOUT_SHORT
+            )
+
+            j = r.json()
+
+            status = (j.get("status") or "").upper()
+
+            if status == "COMPLETED":
+
+                output = j.get("output") or {}
+
+                video_url = (
+                    output.get("video_url")
+                    or output.get("url")
+                    or output.get("output")
+                )
+
+                if not video_url:
+                    raise HTTPException(500, "Preview video mancante")
+
+                return JSONResponse({
+                    "preview_url": video_url
+                })
+
+            if status in ["FAILED", "CANCELLED"]:
+                raise HTTPException(500, "Preview fallita")
+
+            if time.time() - start > 40:
+                raise HTTPException(500, "Timeout preview")
+
+            time.sleep(2)
+
+    except Exception as e:
+        print("Preview error:", e)
+        raise HTTPException(500, "Errore preview AI")
+
 
 # =====================================================
 # SHOPIFY WEBHOOK
