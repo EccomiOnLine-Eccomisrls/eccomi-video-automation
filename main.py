@@ -564,3 +564,18 @@ def video_download(token: str):
     url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_VIDEOS_BUCKET}/{token}.mp4"
 
     return RedirectResponse(url=url)
+
+
+# =====================================================
+# TEST MAIL
+# =====================================================
+
+@app.get("/test-email")
+def test_email():
+    send_video_ready_email(
+        to_email="ciaoeccomionline@gmail.com",
+        token="TEST-EMAIL-123",
+        watch_url=f"{PUBLIC_BASE_URL}/video/test-email-123",
+        download_url=f"{PUBLIC_BASE_URL}/video/test-email-123/download"
+    )
+    return {"ok": True}
