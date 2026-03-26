@@ -339,7 +339,6 @@ async def receive_order(
     audio_url = None
 
     if audio and audio.filename:
-
         audio_bytes = await audio.read()
 
         audio_url = upload_input_to_supabase(
@@ -350,7 +349,6 @@ async def receive_order(
         )
 
     supabase.table("video_jobs").upsert({
-
         "evs_token": token,
         "customer_email": email,
         "plan": normalize_plan(plan),
@@ -361,8 +359,7 @@ async def receive_order(
         "audio_url": audio_url,
         "has_audio": bool(audio_url),
         "updated_at": now_iso()
-
-    }).execute()
+    }, on_conflict="evs_token").execute()
 
     return JSONResponse({"ok": True, "evs_token": token})
 
