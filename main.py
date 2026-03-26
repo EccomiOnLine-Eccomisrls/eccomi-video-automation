@@ -110,6 +110,73 @@ def http_request_with_retries(method: str, url: str, **kwargs):
             time.sleep(1.5 * attempt)
     raise last_err
 
+def send_video_ready_email(to_email: str, token: str, watch_url: str, download_url: str):
+    if not RESEND_API_KEY or not FROM_EMAIL or not to_email:
+        print("⚠️ Email non inviata: RESEND_API_KEY / FROM_EMAIL / destinatario mancanti")
+        return
+
+    subject = "🎬 Il tuo video EVS è pronto"
+    html = f"""
+    <div style="font-family:Arial,sans-serif;background:#0b1b33;padding:32px;color:#ffffff">
+      <div style="max-width:680px;margin:0 auto;background:#10264a;border-radius:18px;overflow:hidden;border:1px solid rgba(255,255,255,.08)">
+        <div style="padding:28px 28px 12px;text-align:center">
+          <div style="font-size:18px;opacity:.9;margin-bottom:8px">Eccomi Video Studio</div>
+          <h1 style="margin:0;font-size:34px;line-height:1.15">🎬 Il tuo video è pronto</h1>
+          <p style="margin:14px 0 0;font-size:16px;opacity:.9">
+            Puoi guardarlo online oppure scaricarlo subito.
+          </p>
+        </div>
+
+        <div style="padding:24px 28px">
+          <div style="background:#0d203f;border-radius:14px;padding:18px 18px 8px;border:1px solid rgba(255,255,255,.06)">
+            <p style="margin:0 0 10px;font-size:14px;opacity:.8">Riferimento EVS</p>
+            <p style="margin:0 0 18px;font-size:16px;font-weight:700;word-break:break-word">{token}</p>
+
+            <div style="margin:24px 0;text-align:center">
+              <a href="{watch_url}" style="display:inline-block;background:#1f6bff;color:#fff;text-decoration:none;padding:14px 22px;border-radius:12px;font-weight:700;margin:0 8px 10px">
+                ▶ Guarda il video
+              </a>
+              <a href="{download_url}" style="display:inline-block;background:#ffffff;color:#0b1b33;text-decoration:none;padding:14px 22px;border-radius:12px;font-weight:700;margin:0 8px 10px">
+                ⬇ Scarica il video
+              </a>
+            </div>
+
+            <p style="margin:14px 0 0;font-size:14px;opacity:.85">
+              Se hai bisogno di assistenza, scrivi a
+              <a href="mailto:{SUPPORT_EMAIL}" style="color:#9ec5ff">{SUPPORT_EMAIL}</a>.
+            </p>
+          </div>
+        </div>
+
+        <div style="padding:0 28px 24px;text-align:center;font-size:12px;opacity:.65">
+          Eccomi Video Studio — consegna automatica completata con successo
+        </div>
+      </div>
+    </div>
+    """
+
+    payload = {
+        "from": FROM_EMAIL,
+        "to": [to_email],
+        "subject": subject,
+        "html": html,
+    }
+
+    try:
+        r = requests.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=30,
+        )
+        print("📩 Resend status:", r.status_code, r.text)
+    except Exception as e:
+        print("❌ Errore invio email:", e)
+        
+
 
 # =====================================================
 # STORAGE
