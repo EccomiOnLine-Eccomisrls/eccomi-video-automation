@@ -633,25 +633,229 @@ async def shopify_webhook(request: Request, bg: BackgroundTasks):
 def video_view(token: str):
 
     video_stream = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_VIDEOS_BUCKET}/{token}.mp4"
-
     download_url = f"{PUBLIC_BASE_URL}/video/{token}/download"
 
+    order_label = token
+
+    try:
+        row = supabase.table("video_jobs")\
+            .select("shopify_order_name,customer_email,finished_at")\
+            .eq("evs_token", token)\
+            .limit(1)\
+            .execute()
+
+        if row.data:
+            order_label = row.data[0].get("shopify_order_name") or token
+            customer_email = row.data[0].get("customer_email") or ""
+            finished_at = row.data[0].get("finished_at") or ""
+        else:
+            customer_email = ""
+            finished_at = ""
+    except Exception:
+        customer_email = ""
+        finished_at = ""
+
     return HTMLResponse(f"""
-<html>
-<body style="background:#0b1b33;color:white;text-align:center;padding:40px;font-family:sans-serif">
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Il tuo video è pronto</title>
+  <style>
+    *{{box-sizing:border-box}}
+    body{{
+      margin:0;
+      font-family:Arial,sans-serif;
+      background:
+        radial-gradient(circle at top, rgba(31,107,255,.22), transparent 35%),
+        linear-gradient(180deg,#07162b 0%, #0b1b33 50%, #10264a 100%);
+      color:#fff;
+    }}
+    .wrap{{
+      min-height:100vh;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding:24px 16px;
+    }}
+    .card{{
+      width:100%;
+      max-width:1040px;
+      background:rgba(255,255,255,.04);
+      border:1px solid rgba(255,255,255,.08);
+      border-radius:28px;
+      padding:26px;
+      box-shadow:0 18px 60px rgba(0,0,0,.30);
+      backdrop-filter:blur(8px);
+    }}
+    .top{{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:16px;
+      margin-bottom:20px;
+      flex-wrap:wrap;
+    }}
+    .brand{{
+      font-size:14px;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+      opacity:.72;
+    }}
+    .badge{{
+      display:inline-block;
+      padding:8px 12px;
+      border-radius:999px;
+      background:rgba(31,107,255,.18);
+      border:1px solid rgba(31,107,255,.35);
+      font-size:13px;
+      font-weight:700;
+    }}
+    .hero{{
+      text-align:center;
+      margin-bottom:20px;
+    }}
+    .hero h1{{
+      margin:0 0 10px;
+      font-size:clamp(30px,5vw,52px);
+      line-height:1.05;
+    }}
+    .hero p{{
+      margin:0 auto;
+      max-width:760px;
+      font-size:16px;
+      opacity:.85;
+      line-height:1.5;
+    }}
+    .video-box{{
+      border-radius:22px;
+      overflow:hidden;
+      background:#050b14;
+      border:1px solid rgba(255,255,255,.08);
+      box-shadow:inset 0 0 0 1px rgba(255,255,255,.02);
+    }}
+    video{{
+      width:100%;
+      display:block;
+      max-height:72vh;
+      background:#000;
+    }}
+    .actions{{
+      display:flex;
+      justify-content:center;
+      gap:12px;
+      flex-wrap:wrap;
+      margin-top:22px;
+    }}
+    .btn{{
+      display:inline-block;
+      text-decoration:none;
+      padding:14px 22px;
+      border-radius:14px;
+      font-weight:700;
+      font-size:16px;
+      transition:.18s ease;
+    }}
+    .btn:hover{{
+      transform:translateY(-1px);
+    }}
+    .btn-primary{{
+      background:#1f6bff;
+      color:#fff;
+      box-shadow:0 10px 24px rgba(31,107,255,.25);
+    }}
+    .btn-secondary{{
+      background:#fff;
+      color:#0b1b33;
+    }}
+    .grid{{
+      display:grid;
+      grid-template-columns:repeat(3,1fr);
+      gap:14px;
+      margin-top:24px;
+    }}
+    .info{{
+      background:rgba(255,255,255,.035);
+      border:1px solid rgba(255,255,255,.07);
+      border-radius:18px;
+      padding:16px;
+    }}
+    .info small{{
+      display:block;
+      opacity:.65;
+      margin-bottom:8px;
+      font-size:12px;
+      text-transform:uppercase;
+      letter-spacing:.06em;
+    }}
+    .info strong{{
+      display:block;
+      font-size:15px;
+      line-height:1.45;
+      word-break:break-word;
+    }}
+    .foot{{
+      margin-top:20px;
+      text-align:center;
+      font-size:13px;
+      opacity:.66;
+    }}
+    @media (max-width: 820px){{
+      .card{{padding:18px}}
+      .grid{{grid-template-columns:1fr}}
+    }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="top">
+        <div class="brand">Eccomi Video Studio</div>
+        <div class="badge">✅ Video completato</div>
+      </div>
 
-<h1>🎬 Il tuo video è pronto</h1>
+      <div class="hero">
+        <h1>🎬 Il tuo video è pronto</h1>
+        <p>
+          Guardalo online, scaricalo sul tuo dispositivo e conservalo come contenuto personale,
+          messaggio speciale o video da condividere.
+        </p>
+      </div>
 
-<video controls autoplay playsinline width="90%">
-<source src="{video_stream}" type="video/mp4">
-</video>
+      <div class="video-box">
+        <video controls playsinline preload="metadata">
+          <source src="{video_stream}" type="video/mp4">
+        </video>
+      </div>
 
-<br><br>
+      <div class="actions">
+        <a class="btn btn-primary" href="{video_stream}" target="_blank">▶ Guarda il video</a>
+        <a class="btn btn-secondary" href="{download_url}">⬇ Scarica il video</a>
+      </div>
 
-<a href="{download_url}" style="background:white;color:black;padding:10px 20px;border-radius:8px;text-decoration:none">
-Scarica video
-</a>
+      <div class="grid">
+        <div class="info">
+          <small>Ordine</small>
+          <strong>{order_label}</strong>
+        </div>
 
+        <div class="info">
+          <small>Email cliente</small>
+          <strong>{customer_email or "Non disponibile"}</strong>
+        </div>
+
+        <div class="info">
+          <small>Completato il</small>
+          <strong>{finished_at or "Appena generato"}</strong>
+        </div>
+      </div>
+
+      <div class="foot">
+        Eccomi Video Studio · Se hai bisogno di assistenza scrivi a {SUPPORT_EMAIL}
+      </div>
+    </div>
+  </div>
 </body>
 </html>
 """)
@@ -679,18 +883,3 @@ def video_download(token: str):
         media_type="video/mp4",
         headers=headers
     )
-
-
-# =====================================================
-# TEST MAIL
-# =====================================================
-
-@app.get("/test-email")
-def test_email():
-    send_video_ready_email(
-        to_email="ciaoeccomionline@gmail.com",
-        token="TEST-EMAIL-123",
-        watch_url=f"{PUBLIC_BASE_URL}/video/test-email-123",
-        download_url=f"{PUBLIC_BASE_URL}/video/test-email-123/download"
-    )
-    return {"ok": True}
