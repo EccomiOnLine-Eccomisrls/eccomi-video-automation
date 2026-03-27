@@ -574,6 +574,7 @@ def preview_status(job_id: str):
 # =====================================================
 # SHOPIFY WEBHOOK
 # =====================================================
+
 @app.post("/shopify/webhook")
 async def shopify_webhook(request: Request, bg: BackgroundTasks):
 
@@ -588,39 +589,39 @@ async def shopify_webhook(request: Request, bg: BackgroundTasks):
 
     for item in data.get("line_items", []):
 
-    for prop in item.get("properties", []):
+        for prop in item.get("properties", []):
 
-        name = prop.get("name", "").lower()
+            name = prop.get("name", "").lower()
 
-        if "evs" in name and "token" in name:
+            if "evs" in name and "token" in name:
 
-            tok = prop.get("value")
+                tok = prop.get("value")
 
-            res = supabase.table("video_jobs")\
-                .select("status")\
-                .eq("evs_token", tok)\
-                .limit(1)\
-                .execute()
+                res = supabase.table("video_jobs")\
+                    .select("status")\
+                    .eq("evs_token", tok)\
+                    .limit(1)\
+                    .execute()
 
-            if not res.data:
-                continue
+                if not res.data:
+                    continue
 
-            status = res.data[0]["status"]
+                current_status = res.data[0]["status"]
 
-            if status in ["processing", "done"]:
-                continue
+                if current_status in ["processing", "done"]:
+                    continue
 
-            order_id = str(data.get("id") or "")
-            order_name = data.get("name") or ""
+                order_id = str(data.get("id") or "")
+                order_name = data.get("name") or ""
 
-            supabase.table("video_jobs").update({
-                "status": "processing",
-                "shopify_order_id": order_id,
-                "shopify_order_name": order_name,
-                "updated_at": now_iso()
-            }).eq("evs_token", tok).execute()
+                supabase.table("video_jobs").update({
+                    "status": "processing",
+                    "shopify_order_id": order_id,
+                    "shopify_order_name": order_name,
+                    "updated_at": now_iso()
+                }).eq("evs_token", tok).execute()
 
-            bg.add_task(runpod_submit, tok)
+                bg.add_task(runpod_submit, tok)
 
     return {"ok": True}
 
