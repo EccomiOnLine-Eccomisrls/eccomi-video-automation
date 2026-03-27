@@ -577,36 +577,39 @@ async def shopify_webhook(request: Request, bg: BackgroundTasks):
 
     for item in data.get("line_items", []):
 
-        for prop in item.get("properties", []):
+    for prop in item.get("properties", []):
 
-            name = prop.get("name", "").lower()
+        name = prop.get("name", "").lower()
 
-            if "evs" in name and "token" in name:
+        if "evs" in name and "token" in name:
 
-                tok = prop.get("value")
+            tok = prop.get("value")
 
-                res = supabase.table("video_jobs")\
-                    .select("status")\
-                    .eq("evs_token", tok)\
-                    .limit(1)\
-                    .execute()
+            res = supabase.table("video_jobs")\
+                .select("status")\
+                .eq("evs_token", tok)\
+                .limit(1)\
+                .execute()
 
-                if not res.data:
-                    continue
+            if not res.data:
+                continue
 
-                status = res.data[0]["status"]
+            status = res.data[0]["status"]
 
-                if status in ["processing", "done"]:
-                    continue
+            if status in ["processing", "done"]:
+                continue
 
-                supabase.table("video_jobs").update({
+            order_id = str(data.get("id") or "")
+            order_name = data.get("name") or ""
 
-                    "status": "processing",
-                    "updated_at": now_iso()
+            supabase.table("video_jobs").update({
+                "status": "processing",
+                "shopify_order_id": order_id,
+                "shopify_order_name": order_name,
+                "updated_at": now_iso()
+            }).eq("evs_token", tok).execute()
 
-                }).eq("evs_token", tok).execute()
-
-                bg.add_task(runpod_submit, tok)
+            bg.add_task(runpod_submit, tok)
 
     return {"ok": True}
 
