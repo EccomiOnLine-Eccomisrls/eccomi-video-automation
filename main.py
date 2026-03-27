@@ -12,7 +12,7 @@ from typing import Optional
 import requests
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, StreamingResponse
 
 from supabase import create_client, Client
 
@@ -665,7 +665,20 @@ def video_download(token: str):
 
     url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_VIDEOS_BUCKET}/{token}.mp4"
 
-    return RedirectResponse(url=url)
+    r = requests.get(url, stream=True, timeout=60)
+
+    if r.status_code != 200:
+        raise HTTPException(404, "Video non trovato")
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="ordine-{token}.mp4"'
+    }
+
+    return StreamingResponse(
+        r.iter_content(chunk_size=8192),
+        media_type="video/mp4",
+        headers=headers
+    )
 
 
 # =====================================================
