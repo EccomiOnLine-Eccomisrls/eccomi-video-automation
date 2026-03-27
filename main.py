@@ -205,6 +205,75 @@ def upload_input_to_supabase(token, filename, content, content_type):
 
     return supabase.storage.from_(SUPABASE_INPUTS_BUCKET).get_public_url(path)
 
+    def upload_local_file_to_supabase(bucket: str, object_name: str, local_path: str, content_type: str = "application/octet-stream"):
+    if not supabase:
+        return None
+
+    with open(local_path, "rb") as f:
+        file_bytes = f.read()
+
+    supabase.storage.from_(bucket).upload(
+        path=object_name,
+        file=file_bytes,
+        file_options={"content-type": content_type, "x-upsert": "true"}
+    )
+
+    return supabase.storage.from_(bucket).get_public_url(object_name)
+
+
+def create_reel_from_video_url(source_url: str, token: str):
+    if not MAKE_REEL:
+        print("ℹ️ MAKE_REEL disattivato")
+        return None
+
+    if not ffmpeg_exists():
+        print("❌ ffmpeg non disponibile")
+        return None
+
+    source_path = f"/tmp/{token}_source.mp4"
+    reel_path = f"/tmp/{token}_reel.mp4"
+
+    try:
+        r = http_request_with_retries(
+            "GET",
+            source_url,
+            stream=True,
+            timeout=HTTP_TIMEOUT_LONG
+        )
+
+        if r.status_code != 200:
+            print("❌ Download video originale fallito per Reel:", r.status_code)
+            return None
+
+        with open(source_path, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+
+        create_vertical_reel(source_path, reel_path)
+
+        if not os.path.exists(reel_path):
+            print("❌ Reel non creato")
+            return None
+
+        if os.path.getsize(reel_path) < 5000:
+            print("❌ Reel troppo piccolo")
+            return None
+
+        reel_public_url = upload_local_file_to_supabase(
+            SUPABASE_VIDEOS_BUCKET,
+            f"{token}_reel.mp4",
+            reel_path,
+            "video/mp4"
+        )
+
+        print("✅ Reel pronto:", reel_public_url)
+        return reel_public_url
+
+    except Exception as e:
+        print("❌ Errore generazione Reel:", e)
+        return None
+
 
 # =====================================================
 # REEL
