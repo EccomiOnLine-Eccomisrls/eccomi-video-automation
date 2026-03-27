@@ -113,12 +113,20 @@ def http_request_with_retries(method: str, url: str, **kwargs):
             time.sleep(1.5 * attempt)
     raise last_err
 
-def send_video_ready_email(to_email: str, token: str, watch_url: str, download_url: str):
+def send_video_ready_email(
+    to_email: str,
+    token: str,
+    watch_url: str,
+    download_url: str,
+    order_label: str = ""
+):
     if not RESEND_API_KEY or not FROM_EMAIL or not to_email:
         print("⚠️ Email non inviata: RESEND_API_KEY / FROM_EMAIL / destinatario mancanti")
         return
 
+    label = order_label or token
     subject = "🎬 Il tuo video EVS è pronto"
+
     html = f"""
     <div style="font-family:Arial,sans-serif;background:#0b1b33;padding:32px;color:#ffffff">
       <div style="max-width:680px;margin:0 auto;background:#10264a;border-radius:18px;overflow:hidden;border:1px solid rgba(255,255,255,.08)">
@@ -132,8 +140,8 @@ def send_video_ready_email(to_email: str, token: str, watch_url: str, download_u
 
         <div style="padding:24px 28px">
           <div style="background:#0d203f;border-radius:14px;padding:18px 18px 8px;border:1px solid rgba(255,255,255,.06)">
-            <p style="margin:0 0 10px;font-size:14px;opacity:.8">Riferimento EVS</p>
-            <p style="margin:0 0 18px;font-size:16px;font-weight:700;word-break:break-word">{token}</p>
+            <p style="margin:0 0 10px;font-size:14px;opacity:.8">Ordine</p>
+            <p style="margin:0 0 18px;font-size:16px;font-weight:700;word-break:break-word">{label}</p>
 
             <div style="margin:24px 0;text-align:center">
               <a href="{watch_url}" style="display:inline-block;background:#1f6bff;color:#fff;text-decoration:none;padding:14px 22px;border-radius:12px;font-weight:700;margin:0 8px 10px">
@@ -177,8 +185,7 @@ def send_video_ready_email(to_email: str, token: str, watch_url: str, download_u
         )
         print("📩 Resend status:", r.status_code, r.text)
     except Exception as e:
-        print("❌ Errore invio email:", e)
-        
+        print("❌ Errore invio email:", e)        
 
 
 # =====================================================
