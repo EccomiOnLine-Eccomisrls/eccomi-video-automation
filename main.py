@@ -636,6 +636,9 @@ def video_view(token: str):
     download_url = f"{PUBLIC_BASE_URL}/video/{token}/download"
 
     order_label = token
+    customer_email = ""
+    finished_at = ""
+    pretty_finished = "Appena generato"
 
     try:
         row = supabase.table("video_jobs")\
@@ -646,14 +649,22 @@ def video_view(token: str):
 
         if row.data:
             order_label = row.data[0].get("shopify_order_name") or token
-            customer_email = row.data[0].get("customer_email") or ""
+            customer_email = (row.data[0].get("customer_email") or "").strip().lower()
             finished_at = row.data[0].get("finished_at") or ""
-        else:
-            customer_email = ""
-            finished_at = ""
+
+            if finished_at:
+                try:
+                    dt = datetime.fromisoformat(finished_at.replace("Z", "+00:00"))
+                    mesi = [
+                        "gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
+                        "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"
+                    ]
+                    pretty_finished = f"{dt.day} {mesi[dt.month - 1]} {dt.year} · {dt.strftime('%H:%M')}"
+                except Exception:
+                    pretty_finished = finished_at
+
     except Exception:
-        customer_email = ""
-        finished_at = ""
+        pass
 
     return HTMLResponse(f"""
 <!doctype html>
@@ -688,6 +699,7 @@ def video_view(token: str):
       padding:26px;
       box-shadow:0 18px 60px rgba(0,0,0,.30);
       backdrop-filter:blur(8px);
+      overflow:hidden;
     }}
     .top{{
       display:flex;
@@ -714,7 +726,10 @@ def video_view(token: str):
     }}
     .hero{{
       text-align:center;
-      margin-bottom:20px;
+      margin:0 -26px 22px;
+      padding:42px 22px 28px;
+      background:
+        radial-gradient(circle at 50% -10%, rgba(91,131,255,.85), rgba(61,108,255,.65) 38%, transparent 68%);
     }}
     .hero h1{{
       margin:0 0 10px;
@@ -725,7 +740,7 @@ def video_view(token: str):
       margin:0 auto;
       max-width:760px;
       font-size:16px;
-      opacity:.85;
+      opacity:.88;
       line-height:1.5;
     }}
     .video-box{{
@@ -756,18 +771,26 @@ def video_view(token: str):
       font-weight:700;
       font-size:16px;
       transition:.18s ease;
+      border:none;
     }}
     .btn:hover{{
       transform:translateY(-1px);
     }}
     .btn-primary{{
-      background:#1f6bff;
+      background:#3f6fff;
       color:#fff;
       box-shadow:0 10px 24px rgba(31,107,255,.25);
     }}
     .btn-secondary{{
       background:#fff;
       color:#0b1b33;
+    }}
+    .btn-disabled{{
+      background:rgba(255,255,255,.08);
+      color:rgba(255,255,255,.65);
+      border:1px solid rgba(255,255,255,.10);
+      cursor:not-allowed;
+      pointer-events:none;
     }}
     .grid{{
       display:grid;
@@ -795,6 +818,17 @@ def video_view(token: str):
       line-height:1.45;
       word-break:break-word;
     }}
+    .email-soft{{
+      text-transform:none;
+      font-weight:600;
+      opacity:.92;
+    }}
+    .reel-note{{
+      text-align:center;
+      margin-top:10px;
+      font-size:13px;
+      opacity:.6;
+    }}
     .foot{{
       margin-top:20px;
       text-align:center;
@@ -803,6 +837,7 @@ def video_view(token: str):
     }}
     @media (max-width: 820px){{
       .card{{padding:18px}}
+      .hero{{margin:0 -18px 20px;padding:34px 18px 22px}}
       .grid{{grid-template-columns:1fr}}
     }}
   </style>
@@ -832,6 +867,11 @@ def video_view(token: str):
       <div class="actions">
         <a class="btn btn-primary" href="{video_stream}" target="_blank">▶ Guarda il video</a>
         <a class="btn btn-secondary" href="{download_url}">⬇ Scarica il video</a>
+        <span class="btn btn-disabled">📱 Scarica Reel</span>
+      </div>
+
+      <div class="reel-note">
+        Versione social verticale in arrivo
       </div>
 
       <div class="grid">
@@ -842,12 +882,12 @@ def video_view(token: str):
 
         <div class="info">
           <small>Email cliente</small>
-          <strong>{customer_email or "Non disponibile"}</strong>
+          <strong class="email-soft">{customer_email or "Non disponibile"}</strong>
         </div>
 
         <div class="info">
           <small>Completato il</small>
-          <strong>{finished_at or "Appena generato"}</strong>
+          <strong>{pretty_finished}</strong>
         </div>
       </div>
 
@@ -859,27 +899,3 @@ def video_view(token: str):
 </body>
 </html>
 """)
-
-
-# =====================================================
-# DOWNLOAD
-# =====================================================
-@app.get("/video/{token}/download")
-def video_download(token: str):
-
-    url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_VIDEOS_BUCKET}/{token}.mp4"
-
-    r = requests.get(url, stream=True, timeout=60)
-
-    if r.status_code != 200:
-        raise HTTPException(404, "Video non trovato")
-
-    headers = {
-        "Content-Disposition": f'attachment; filename="ordine-{token}.mp4"'
-    }
-
-    return StreamingResponse(
-        r.iter_content(chunk_size=8192),
-        media_type="video/mp4",
-        headers=headers
-    )
