@@ -715,12 +715,12 @@ def video_view(token: str):
 
     order_label = token
     customer_email = ""
-    finished_at = ""
     pretty_finished = "Appena generato"
+    reel_url = ""
 
     try:
         row = supabase.table("video_jobs")\
-            .select("shopify_order_name,customer_email,finished_at")\
+            .select("shopify_order_name,customer_email,finished_at,video_reel_url")\
             .eq("evs_token", token)\
             .limit(1)\
             .execute()
@@ -729,6 +729,7 @@ def video_view(token: str):
             order_label = row.data[0].get("shopify_order_name") or token
             customer_email = (row.data[0].get("customer_email") or "").strip().lower()
             finished_at = row.data[0].get("finished_at") or ""
+            reel_url = row.data[0].get("video_reel_url") or ""
 
             if finished_at:
                 try:
@@ -743,6 +744,18 @@ def video_view(token: str):
 
     except Exception:
         pass
+
+    reel_button_html = (
+        f'<a class="btn btn-secondary" href="{PUBLIC_BASE_URL}/video/{token}/reel">📱 Scarica Reel</a>'
+        if reel_url else
+        '<span class="btn btn-disabled">📱 Scarica Reel</span>'
+    )
+
+    reel_note_html = (
+        "Versione social verticale pronta"
+        if reel_url else
+        "Versione social verticale in arrivo"
+    )
 
     return HTMLResponse(f"""
 <!doctype html>
@@ -945,11 +958,11 @@ def video_view(token: str):
       <div class="actions">
         <a class="btn btn-primary" href="{video_stream}" target="_blank">▶ Guarda il video</a>
         <a class="btn btn-secondary" href="{download_url}">⬇ Scarica il video</a>
-        <span class="btn btn-disabled">📱 Scarica Reel</span>
+        {reel_button_html}
       </div>
 
       <div class="reel-note">
-        Versione social verticale in arrivo
+        {reel_note_html}
       </div>
 
       <div class="grid">
@@ -977,3 +990,57 @@ def video_view(token: str):
 </body>
 </html>
 """)
+
+
+@app.get("/video/{token}/download")
+def video_download(token: str):
+
+    url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_VIDEOS_BUCKET}/{token}.mp4"
+
+    r = requests.get(url, stream=True, timeout=60)
+
+    if r.status_code != 200:
+        raise HTTPException(404, "Video non trovato")
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="ordine-{token}.mp4"'
+    }
+
+    return StreamingResponse(
+        r.iter_content(chunk_size=8192),
+        media_type="video/mp4",
+        headers=headers
+    )
+
+
+@app.get("/video/{token}/reel")
+def video_reel_download(token: str):
+
+    row = supabase.table("video_jobs")\
+        .select("video_reel_url")\
+        .eq("evs_token", token)\
+        .limit(1)\
+        .execute()
+
+    if not row.data:
+        raise HTTPException(404, "Ordine non trovato")
+
+    reel_url = row.data[0].get("video_reel_url") or ""
+
+    if not reel_url:
+        raise HTTPException(404, "Reel non disponibile")
+
+    r = requests.get(reel_url, stream=True, timeout=60)
+
+    if r.status_code != 200:
+        raise HTTPException(404, "Reel non trovato")
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="ordine-{token}-reel.mp4"'
+    }
+
+    return StreamingResponse(
+        r.iter_content(chunk_size=8192),
+        media_type="video/mp4",
+        headers=headers
+    )
