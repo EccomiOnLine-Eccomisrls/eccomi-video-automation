@@ -223,8 +223,13 @@ def create_vertical_reel(input_mp4, output_mp4):
         "ffmpeg",
         "-y",
         "-i", input_mp4,
-        "-vf", "scale=1080:1080,pad=1080:1920:0:420:black",
-        "-c:a", "copy",
+        "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black",
+        "-c:v", "libx264",
+        "-preset", "medium",
+        "-crf", "23",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-movflags", "+faststart",
         output_mp4
     ]
 
