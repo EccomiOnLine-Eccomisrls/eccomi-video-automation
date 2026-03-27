@@ -366,6 +366,7 @@ def poll_runpod(token, job_id):
                     "status": "done",
                     "video_url": delivery_page,
                     "video_supabase_url": video_url,
+                    "video_reel_url": reel_url,
                     "runpod_job_id": job_id,
                     "processing_seconds": int(time.time() - started),
                     "finished_at": now_iso(),
