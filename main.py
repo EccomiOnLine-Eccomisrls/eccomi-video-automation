@@ -343,7 +343,9 @@ def poll_runpod(token, job_id):
                 if not video_url:
                     print("❌ RunPod completed ma senza video_url")
                     return
-
+                    
+                reel_url = create_reel_from_video_url(video_url, token)
+                
                 delivery_page = f"{PUBLIC_BASE_URL}/video/{token}"
                 download_url = f"{PUBLIC_BASE_URL}/video/{token}/download"
 
