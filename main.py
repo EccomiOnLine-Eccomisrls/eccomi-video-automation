@@ -662,7 +662,15 @@ async def shopify_webhook(request: Request, bg: BackgroundTasks):
 
     data = json.loads(raw.decode("utf-8"))
 
-    if (data.get("financial_status") or "").lower() != "paid":
+    financial_status = (data.get("financial_status") or "").lower()
+    total_price = str(data.get("total_price") or data.get("current_total_price") or "")
+
+    print("SHOPIFY WEBHOOK financial_status:", financial_status)
+    print("SHOPIFY WEBHOOK total_price:", total_price)
+    print("SHOPIFY WEBHOOK order_name:", data.get("name"))
+    print("SHOPIFY WEBHOOK topic:", request.headers.get("X-Shopify-Topic"))
+
+    if financial_status != "paid" and total_price not in ["0", "0.0", "0.00"]:
         return {"ok": True}
 
     for item in data.get("line_items", []):
