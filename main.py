@@ -267,10 +267,10 @@ def poll_runpod(token, job_id):
                 download_url = f"{PUBLIC_BASE_URL}/video/{token}/download"
 
                 email_res = supabase.table("video_jobs")\
-                    .select("customer_email")\
-                    .eq("evs_token", token)\
-                    .limit(1)\
-                    .execute()
+                     .select("customer_email,shopify_order_name")\
+                     .eq("evs_token", token)\
+                     .limit(1)\
+                     .execute()
 
                 customer_email = ""
                 if email_res.data:
