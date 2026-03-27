@@ -205,7 +205,8 @@ def upload_input_to_supabase(token, filename, content, content_type):
 
     return supabase.storage.from_(SUPABASE_INPUTS_BUCKET).get_public_url(path)
 
-    def upload_local_file_to_supabase(bucket: str, object_name: str, local_path: str, content_type: str = "application/octet-stream"):
+
+def upload_local_file_to_supabase(bucket: str, object_name: str, local_path: str, content_type: str = "application/octet-stream"):
     if not supabase:
         return None
 
