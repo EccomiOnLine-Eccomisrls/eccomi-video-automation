@@ -267,14 +267,17 @@ def poll_runpod(token, job_id):
                 download_url = f"{PUBLIC_BASE_URL}/video/{token}/download"
 
                 email_res = supabase.table("video_jobs")\
-                     .select("customer_email,shopify_order_name")\
-                     .eq("evs_token", token)\
-                     .limit(1)\
-                     .execute()
+                    .select("customer_email,shopify_order_name")\
+                    .eq("evs_token", token)\
+                    .limit(1)\
+                    .execute()
 
                 customer_email = ""
+                order_label = ""
+
                 if email_res.data:
                     customer_email = email_res.data[0].get("customer_email") or ""
+                    order_label = email_res.data[0].get("shopify_order_name") or ""
 
                 payload = {
                     "status": "done",
@@ -298,7 +301,8 @@ def poll_runpod(token, job_id):
                         to_email=customer_email,
                         token=token,
                         watch_url=delivery_page,
-                        download_url=download_url
+                        download_url=download_url,
+                        order_label=order_label
                     )
 
                 return
