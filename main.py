@@ -235,7 +235,6 @@ def poll_runpod(token, job_id):
     while waited < RUNPOD_POLL_MAX_SECONDS:
 
         try:
-
             url = f"https://api.runpod.ai/v2/{RUNPOD_ENDPOINT_ID}/status/{job_id}"
 
             r = http_request_with_retries(
@@ -246,72 +245,70 @@ def poll_runpod(token, job_id):
             )
 
             data = r.json() if r.content else {}
-
             status = (data.get("status") or "").upper()
 
             print("RunPod status:", status)
 
             if status == "COMPLETED":
 
-    output = data.get("output") or {}
+                output = data.get("output") or {}
 
-    video_url = (
-        output.get("video_url")
-        or output.get("url")
-        or output.get("output")
-    )
+                video_url = (
+                    output.get("video_url")
+                    or output.get("url")
+                    or output.get("output")
+                )
 
-    if not video_url:
-        print("❌ RunPod completed ma senza video_url")
-        return
+                if not video_url:
+                    print("❌ RunPod completed ma senza video_url")
+                    return
 
-    delivery_page = f"{PUBLIC_BASE_URL}/video/{token}"
-    download_url = f"{PUBLIC_BASE_URL}/video/{token}/download"
+                delivery_page = f"{PUBLIC_BASE_URL}/video/{token}"
+                download_url = f"{PUBLIC_BASE_URL}/video/{token}/download"
 
-    # recupero email cliente
-    email_res = supabase.table("video_jobs")\
-        .select("customer_email")\
-        .eq("evs_token", token)\
-        .limit(1)\
-        .execute()
+                email_res = supabase.table("video_jobs")\
+                    .select("customer_email")\
+                    .eq("evs_token", token)\
+                    .limit(1)\
+                    .execute()
 
-    customer_email = ""
-    if email_res.data:
-        customer_email = email_res.data[0].get("customer_email") or ""
+                customer_email = ""
+                if email_res.data:
+                    customer_email = email_res.data[0].get("customer_email") or ""
 
-    payload = {
-        "status": "done",
-        "video_url": delivery_page,
-        "video_supabase_url": video_url,
-        "runpod_job_id": job_id,
-        "processing_seconds": int(time.time() - started),
-        "finished_at": now_iso(),
-        "updated_at": now_iso()
-    }
+                payload = {
+                    "status": "done",
+                    "video_url": delivery_page,
+                    "video_supabase_url": video_url,
+                    "runpod_job_id": job_id,
+                    "processing_seconds": int(time.time() - started),
+                    "finished_at": now_iso(),
+                    "updated_at": now_iso()
+                }
 
-    response = supabase.table("video_jobs")\
-        .update(payload)\
-        .eq("evs_token", token)\
-        .execute()
+                response = supabase.table("video_jobs")\
+                    .update(payload)\
+                    .eq("evs_token", token)\
+                    .execute()
 
-    print("Supabase update:", response.data)
+                print("Supabase update:", response.data)
 
-    if customer_email:
-        send_video_ready_email(
-            to_email=customer_email,
-            token=token,
-            watch_url=delivery_page,
-            download_url=download_url
-        )
+                if customer_email:
+                    send_video_ready_email(
+                        to_email=customer_email,
+                        token=token,
+                        watch_url=delivery_page,
+                        download_url=download_url
+                    )
 
-    return
+                return
 
-if status in ["FAILED", "CANCELLED"]:
-    supabase.table("video_jobs").update({
-        "status": "failed",
-        "updated_at": now_iso()
-    }).eq("evs_token", token).execute()
-    return
+            if status in ["FAILED", "CANCELLED"]:
+                supabase.table("video_jobs").update({
+                    "status": "failed",
+                    "updated_at": now_iso()
+                }).eq("evs_token", token).execute()
+                return
 
         except Exception as e:
             print("Polling error:", e)
