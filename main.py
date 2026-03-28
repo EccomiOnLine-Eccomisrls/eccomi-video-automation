@@ -997,10 +997,10 @@ def video_view(token: str):
       </div>
 
       <div class="actions">
-        <a class="btn btn-primary" href="{video_stream}" target="_blank">▶ Guarda il video</a>
-        <a class="btn btn-secondary" href="{download_url}">⬇ Scarica il video</a>
-        {reel_button_html}
-      </div>
+  <a class="btn btn-secondary" href="{download_url}">⬇ Scarica il video</a>
+  {reel_button_html}
+  <a class="btn btn-primary" href="{new_order_url}">✨ Crea un altro video</a>
+</div>
 
       <div class="reel-note">
         {reel_note_html}
