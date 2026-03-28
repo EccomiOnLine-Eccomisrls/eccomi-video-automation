@@ -1003,8 +1003,8 @@ def video_view(token: str):
 </div>
 
       <div class="reel-note">
-        {reel_note_html}
-      </div>
+    Scarica il tuo contenuto oppure crea subito un nuovo video. {reel_note_html}
+</div>
 
       <div class="grid">
         <div class="info">
