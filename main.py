@@ -341,6 +341,8 @@ def poll_runpod(token, job_id):
                     or output.get("output")
                 )
 
+                reel_url = output.get("reel_url")
+
                 if not video_url:
                     print("❌ RunPod completed ma senza video_url")
                     return
@@ -365,6 +367,7 @@ def poll_runpod(token, job_id):
                     "status": "done",
                     "video_url": delivery_page,
                     "video_supabase_url": video_url,
+                    "video_reel_url": reel_url,
                     "runpod_job_id": job_id,
                     "processing_seconds": int(time.time() - started),
                     "finished_at": now_iso(),
@@ -387,21 +390,10 @@ def poll_runpod(token, job_id):
                         order_label=order_label
                     )
 
-                try:
-                    reel_url = create_reel_from_video_url(video_url, token)
-
-                    if reel_url:
-                        supabase.table("video_jobs").update({
-                            "video_reel_url": reel_url,
-                            "updated_at": now_iso()
-                        }).eq("evs_token", token).execute()
-
-                        print("✅ Supabase reel update:", reel_url)
-                    else:
-                        print("ℹ️ Reel non disponibile per questo ordine")
-
-                except Exception as reel_err:
-                    print("❌ Reel post-process error:", reel_err)
+                if reel_url:
+                    print("✅ Reel ricevuto da RunPod:", reel_url)
+                else:
+                    print("ℹ️ Reel non restituito da RunPod")
 
                 return
 
