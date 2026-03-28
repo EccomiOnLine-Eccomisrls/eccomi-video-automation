@@ -752,6 +752,7 @@ def video_view(token: str):
 
     video_stream = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_VIDEOS_BUCKET}/{token}.mp4"
     download_url = f"{PUBLIC_BASE_URL}/video/{token}/download"
+    new_order_url = "https://eccomionline.com/products/video-ai-da-foto-parlante"
 
     order_label = token
     customer_email = ""
