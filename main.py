@@ -127,40 +127,68 @@ def send_video_ready_email(
     label = order_label or token
     subject = "🎬 Il tuo video EVS è pronto"
 
+    logo_url = os.getenv("ECCOMI_LOGO_URL", "").strip()
+    new_order_url = "https://eccomionline.com/products/video-ai-da-foto-parlante"
+    site_url = "https://eccomionline.com"
+
+    logo_html = (
+        f'<img src="{logo_url}" alt="Eccomi" style="height:64px;max-width:180px;object-fit:contain;display:block;margin:0 auto 16px;">'
+        if logo_url else
+        '<div style="font-size:22px;font-weight:800;letter-spacing:.02em;margin-bottom:16px;">Eccomi</div>'
+    )
+
     html = f"""
-    <div style="font-family:Arial,sans-serif;background:#0b1b33;padding:32px;color:#ffffff">
-      <div style="max-width:680px;margin:0 auto;background:#10264a;border-radius:18px;overflow:hidden;border:1px solid rgba(255,255,255,.08)">
-        <div style="padding:28px 28px 12px;text-align:center">
-          <div style="font-size:18px;opacity:.9;margin-bottom:8px">Eccomi Video Studio</div>
-          <h1 style="margin:0;font-size:34px;line-height:1.15">🎬 Il tuo video è pronto</h1>
-          <p style="margin:14px 0 0;font-size:16px;opacity:.9">
-            Puoi guardarlo online oppure scaricarlo subito.
+    <div style="margin:0;padding:32px 16px;background:#0b1b33;font-family:Arial,sans-serif;color:#ffffff;">
+      <div style="max-width:700px;margin:0 auto;background:#10264a;border:1px solid rgba(255,255,255,.08);border-radius:20px;overflow:hidden;">
+        
+        <div style="padding:28px 24px 10px;text-align:center;">
+          {logo_html}
+          <div style="font-size:15px;opacity:.88;margin-bottom:8px;">Eccomi Video Studio</div>
+          <h1 style="margin:0;font-size:34px;line-height:1.12;">🎬 Il tuo video EVS è pronto</h1>
+          <p style="margin:14px 0 0;font-size:16px;line-height:1.5;opacity:.92;">
+            Il tuo contenuto è stato completato con successo. Puoi guardarlo online oppure scaricarlo subito.
           </p>
         </div>
 
-        <div style="padding:24px 28px">
-          <div style="background:#0d203f;border-radius:14px;padding:18px 18px 8px;border:1px solid rgba(255,255,255,.06)">
-            <p style="margin:0 0 10px;font-size:14px;opacity:.8">Ordine</p>
-            <p style="margin:0 0 18px;font-size:16px;font-weight:700;word-break:break-word">{label}</p>
+        <div style="padding:22px 24px 10px;">
+          <div style="background:#0d203f;border:1px solid rgba(255,255,255,.06);border-radius:16px;padding:18px;">
+            <div style="font-size:13px;opacity:.72;margin-bottom:8px;">Ordine</div>
+            <div style="font-size:24px;font-weight:800;word-break:break-word;margin-bottom:18px;">{label}</div>
 
-            <div style="margin:24px 0;text-align:center">
-              <a href="{watch_url}" style="display:inline-block;background:#1f6bff;color:#fff;text-decoration:none;padding:14px 22px;border-radius:12px;font-weight:700;margin:0 8px 10px">
-                ▶ Guarda il video
+            <div style="text-align:center;margin:26px 0 14px;">
+              <a href="{watch_url}" style="display:inline-block;background:#2f6dff;color:#ffffff;text-decoration:none;padding:14px 24px;border-radius:12px;font-size:16px;font-weight:700;margin:0 8px 12px;">
+                ▶ Guarda il tuo video
               </a>
-              <a href="{download_url}" style="display:inline-block;background:#ffffff;color:#0b1b33;text-decoration:none;padding:14px 22px;border-radius:12px;font-weight:700;margin:0 8px 10px">
+              <a href="{download_url}" style="display:inline-block;background:#ffffff;color:#0b1b33;text-decoration:none;padding:14px 24px;border-radius:12px;font-size:16px;font-weight:700;margin:0 8px 12px;">
                 ⬇ Scarica il video
               </a>
             </div>
 
-            <p style="margin:14px 0 0;font-size:14px;opacity:.85">
-              Se hai bisogno di assistenza, scrivi a
-              <a href="mailto:{SUPPORT_EMAIL}" style="color:#9ec5ff">{SUPPORT_EMAIL}</a>.
+            <div style="text-align:center;margin:6px 0 4px;">
+              <a href="{new_order_url}" style="display:inline-block;background:#17345f;color:#ffffff;text-decoration:none;padding:13px 22px;border-radius:12px;font-size:15px;font-weight:700;border:1px solid rgba(255,255,255,.12);">
+                ✨ Crea un altro video
+              </a>
+            </div>
+
+            <p style="margin:18px 0 0;font-size:14px;line-height:1.5;opacity:.86;text-align:center;">
+              Il tuo video resta disponibile online e può essere scaricato quando vuoi.
             </p>
           </div>
         </div>
 
-        <div style="padding:0 28px 24px;text-align:center;font-size:12px;opacity:.65">
-          Eccomi Video Studio — consegna automatica completata con successo
+        <div style="padding:8px 24px 24px;text-align:center;">
+          <p style="margin:10px 0 0;font-size:14px;line-height:1.5;opacity:.82;">
+            Se hai bisogno di assistenza, scrivi a
+            <a href="mailto:{SUPPORT_EMAIL}" style="color:#9ec5ff;text-decoration:none;">{SUPPORT_EMAIL}</a>
+          </p>
+
+          <p style="margin:10px 0 0;font-size:13px;opacity:.66;">
+            <a href="{site_url}" style="color:#9ec5ff;text-decoration:none;">eccomionline.com</a>
+          </p>
+
+          <p style="margin:14px 0 0;font-size:12px;opacity:.58;">
+            Eccomi Video Studio — consegna automatica completata con successo
+          </p>
         </div>
       </div>
     </div>
