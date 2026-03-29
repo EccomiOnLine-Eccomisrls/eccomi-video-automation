@@ -1008,9 +1008,8 @@ logo_html = (
       <div class="hero">
         <h1>🎬 Il tuo video è pronto</h1>
         <p>
-          Guardalo online, scaricalo sul tuo dispositivo e conservalo come contenuto personale,
-          messaggio speciale o video da condividere.
-        </p>
+  Guardalo online, scaricalo sul tuo dispositivo o crea subito un nuovo video.
+</p>
       </div>
 
       <div class="video-box">
@@ -1026,7 +1025,7 @@ logo_html = (
 </div>
 
       <div class="reel-note">
-    Scarica il tuo contenuto oppure crea subito un nuovo video. {reel_note_html}
+  Scarica il tuo contenuto. La versione social verticale è pronta. {reel_note_html}
 </div>
 
       <div class="grid">
@@ -1047,8 +1046,8 @@ logo_html = (
       </div>
 
       <div class="foot">
-        Eccomi Video Studio · Se hai bisogno di assistenza scrivi a {SUPPORT_EMAIL}
-      </div>
+  EVS è un servizio digitale di Eccomi OnLine · Assistenza: {SUPPORT_EMAIL}
+</div>
     </div>
   </div>
 </body>
