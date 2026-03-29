@@ -769,33 +769,33 @@ def video_view(token: str):
     reel_url = ""
 
     try:
-        row = supabase.table("video_jobs")\
-            .select("shopify_order_name,customer_email,finished_at,video_reel_url")\
-            .eq("evs_token", token)\
-            .limit(1)\
-            .execute()
+    row = supabase.table("video_jobs")\
+        .select("shopify_order_name,customer_email,finished_at,video_reel_url")\
+        .eq("evs_token", token)\
+        .limit(1)\
+        .execute()
 
-        if row.data:
-            order_label = row.data[0].get("shopify_order_name") or token
-            customer_email = (row.data[0].get("customer_email") or "").strip().lower()
-            finished_at = row.data[0].get("finished_at") or ""
-            reel_url = row.data[0].get("video_reel_url") or ""
+    if row.data:
+        order_label = row.data[0].get("shopify_order_name") or token
+        customer_email = (row.data[0].get("customer_email") or "").strip().lower()
+        finished_at = row.data[0].get("finished_at") or ""
+        reel_url = row.data[0].get("video_reel_url") or ""
 
-            if finished_at:
-    try:
-        dt = datetime.fromisoformat(finished_at.replace("Z", "+00:00"))
-        dt_local = dt.astimezone(ZoneInfo("Europe/Rome"))
+        if finished_at:
+            try:
+                dt = datetime.fromisoformat(finished_at.replace("Z", "+00:00"))
+                dt_local = dt.astimezone(ZoneInfo("Europe/Rome"))
 
-        mesi = [
-            "gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
-            "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"
-        ]
-        pretty_finished = f"{dt_local.day} {mesi[dt_local.month - 1]} {dt_local.year} · {dt_local.strftime('%H:%M')}"
-    except Exception:
-        pretty_finished = finished_at
+                mesi = [
+                    "gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
+                    "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"
+                ]
+                pretty_finished = f"{dt_local.day} {mesi[dt_local.month - 1]} {dt_local.year} · {dt_local.strftime('%H:%M')}"
+            except Exception:
+                pretty_finished = finished_at
 
-    except Exception:
-        pass
+except Exception:
+    pass
 
     reel_button_html = (
         f'<a class="btn btn-secondary" href="{PUBLIC_BASE_URL}/video/{token}/reel">📱 Scarica Reel</a>'
