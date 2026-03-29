@@ -71,8 +71,12 @@ def now_iso() -> str:
 def sanitize_text(text: str) -> str:
     if not text:
         return ""
+
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    text = text.encode("ascii", "ignore").decode("ascii", "ignore")
+    text = text.replace("\u00a0", " ")   # spazio non separabile
+    text = text.replace("’", "'")        # apostrofo tipografico -> normale
+    text = text.replace("“", '"').replace("”", '"')
+
     return text.strip()[:4000]
 
 
