@@ -940,6 +940,12 @@ def video_view(token: str):
       background:#fff;
       color:#0b1b33;
     }}
+    .btn-share{{
+  background:#1b1b1b;
+  color:#fff;
+  border:1px solid rgba(255,255,255,.14);
+  box-shadow:0 8px 18px rgba(0,0,0,.18);
+}}
     .btn-disabled{{
       background:rgba(255,255,255,.08);
       color:rgba(255,255,255,.65);
@@ -1054,6 +1060,36 @@ def video_view(token: str):
       </div>
     </div>
   </div>
+  <script>
+  (function () {{
+    const btn = document.getElementById("share-evs-btn");
+    if (!btn) return;
+
+    const shareData = {{
+      title: "Eccomi Video Studio",
+      text: "Guarda questo servizio: puoi creare un video AI da foto parlante su Eccomi OnLine.",
+      url: "{new_order_url}"
+    }};
+
+    btn.addEventListener("click", async function () {{
+      try {{
+        if (navigator.share) {{
+          await navigator.share(shareData);
+          return;
+        }}
+
+        await navigator.clipboard.writeText(shareData.url);
+        btn.textContent = "✅ Link copiato";
+        setTimeout(() => {{
+          btn.textContent = "📤 Consiglia EVS";
+        }}, 1800);
+
+      }} catch (e) {{
+        console.log("Share error:", e);
+      }}
+    }});
+  }})();
+</script>
 </body>
 </html>
 """)
