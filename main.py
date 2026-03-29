@@ -998,9 +998,12 @@ logo_html = (
   <div class="wrap">
     <div class="card">
       <div class="top">
-        <div class="brand">Eccomi Video Studio</div>
-        <div class="badge">✅ Video completato</div>
-      </div>
+  <div class="brand-head">
+    {logo_html}
+    <div class="brand">Eccomi Video Studio</div>
+  </div>
+  <div class="badge">✅ Video completato</div>
+</div>
 
       <div class="hero">
         <h1>🎬 Il tuo video è pronto</h1>
