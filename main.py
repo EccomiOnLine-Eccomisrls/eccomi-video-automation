@@ -849,12 +849,24 @@ logo_html = (
       margin-bottom:20px;
       flex-wrap:wrap;
     }}
-    .brand{{
-      font-size:14px;
-      letter-spacing:.08em;
-      text-transform:uppercase;
-      opacity:.72;
-    }}
+    .brand{
+  font-size:14px;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  opacity:.72;
+}
+.brand-head{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  flex-wrap:wrap;
+}
+.brand-logo{
+  height:42px;
+  width:auto;
+  display:block;
+  filter:drop-shadow(0 4px 12px rgba(0,0,0,.25));
+}
     .badge{{
       display:inline-block;
       padding:8px 12px;
