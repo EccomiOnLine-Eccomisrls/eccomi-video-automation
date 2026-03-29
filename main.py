@@ -763,7 +763,7 @@ def video_view(token: str):
         if logo_url else ""
     )
 
-        order_label = token
+    order_label = token
     customer_email = ""
     pretty_finished = "Appena generato"
     reel_url = ""
