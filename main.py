@@ -7,6 +7,7 @@ import json
 import uuid
 import subprocess
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Optional
 
 import requests
@@ -781,15 +782,17 @@ def video_view(token: str):
             reel_url = row.data[0].get("video_reel_url") or ""
 
             if finished_at:
-                try:
-                    dt = datetime.fromisoformat(finished_at.replace("Z", "+00:00"))
-                    mesi = [
-                        "gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
-                        "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"
-                    ]
-                    pretty_finished = f"{dt.day} {mesi[dt.month - 1]} {dt.year} · {dt.strftime('%H:%M')}"
-                except Exception:
-                    pretty_finished = finished_at
+    try:
+        dt = datetime.fromisoformat(finished_at.replace("Z", "+00:00"))
+        dt_local = dt.astimezone(ZoneInfo("Europe/Rome"))
+
+        mesi = [
+            "gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
+            "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"
+        ]
+        pretty_finished = f"{dt_local.day} {mesi[dt_local.month - 1]} {dt_local.year} · {dt_local.strftime('%H:%M')}"
+    except Exception:
+        pretty_finished = finished_at
 
     except Exception:
         pass
@@ -862,7 +865,7 @@ def video_view(token: str):
       flex-wrap:wrap;
     }}
     .brand-logo{{
-      height:42px;
+      height:54px;
       width:auto;
       display:block;
       filter:drop-shadow(0 4px 12px rgba(0,0,0,.25));
