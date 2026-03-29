@@ -1022,10 +1022,11 @@ def video_view(token: str):
       </div>
 
       <div class="actions">
-        <a class="btn btn-secondary" href="{download_url}">⬇ Scarica il video</a>
-        {reel_button_html}
-        <a class="btn btn-primary" href="{new_order_url}">✨ Crea un altro video</a>
-      </div>
+  <a class="btn btn-secondary" href="{download_url}">⬇ Scarica il video</a>
+  {reel_button_html}
+  <button class="btn btn-share" id="share-evs-btn" type="button">📤 Consiglia EVS</button>
+  <a class="btn btn-primary" href="{new_order_url}">✨ Crea un altro video</a>
+</div>
 
       <div class="reel-note">
         Scarica il tuo contenuto. {reel_note_html}
