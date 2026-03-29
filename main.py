@@ -138,61 +138,64 @@ def send_video_ready_email(
     )
 
     html = f"""
-    <div style="margin:0;padding:32px 16px;background:#0b1b33;font-family:Arial,sans-serif;color:#ffffff;">
-      <div style="max-width:700px;margin:0 auto;background:#10264a;border:1px solid rgba(255,255,255,.08);border-radius:20px;overflow:hidden;">
-        
-        <div style="padding:28px 24px 10px;text-align:center;">
-          {logo_html}
-          <div style="font-size:15px;opacity:.88;margin-bottom:8px;">Eccomi Video Studio</div>
-          <h1 style="margin:0;font-size:34px;line-height:1.12;">🎬 Il tuo video EVS è pronto</h1>
-          <p style="margin:14px 0 0;font-size:16px;line-height:1.5;opacity:.92;">
-            Il tuo contenuto è stato completato con successo. Puoi guardarlo online oppure scaricarlo subito.
-          </p>
+<div style="margin:0;padding:32px 16px;background:#0b1b33;font-family:Arial,sans-serif;color:#ffffff;">
+  <div style="max-width:700px;margin:0 auto;background:#10264a;border:1px solid rgba(255,255,255,.08);border-radius:20px;overflow:hidden;">
+    
+    <div style="padding:28px 24px 10px;text-align:center;">
+      {logo_html}
+      <div style="font-size:15px;opacity:.88;margin-bottom:8px;">Eccomi Video Studio</div>
+      <h1 style="margin:0;font-size:34px;line-height:1.12;">🎬 Il tuo video è pronto</h1>
+      <p style="margin:14px 0 0;font-size:16px;line-height:1.5;opacity:.92;">
+        Il tuo video è pronto. Guardalo online oppure scaricalo subito.
+      </p>
+    </div>
+
+    <div style="padding:22px 24px 10px;">
+      <div style="background:#0d203f;border:1px solid rgba(255,255,255,.06);border-radius:16px;padding:18px;">
+        <div style="font-size:13px;opacity:.72;margin-bottom:8px;">Ordine</div>
+        <div style="font-size:24px;font-weight:800;word-break:break-word;margin-bottom:18px;">{label}</div>
+
+        <div style="text-align:center;margin:26px 0 14px;">
+          <a href="{watch_url}" style="display:inline-block;background:#2f6dff;color:#ffffff;text-decoration:none;padding:14px 24px;border-radius:12px;font-size:16px;font-weight:700;margin:0 8px 12px;">
+            ▶ Guarda il tuo video
+          </a>
+          <a href="{download_url}" style="display:inline-block;background:#ffffff;color:#0b1b33;text-decoration:none;padding:14px 24px;border-radius:12px;font-size:16px;font-weight:700;margin:0 8px 12px;">
+            ⬇ Scarica il video
+          </a>
         </div>
 
-        <div style="padding:22px 24px 10px;">
-          <div style="background:#0d203f;border:1px solid rgba(255,255,255,.06);border-radius:16px;padding:18px;">
-            <div style="font-size:13px;opacity:.72;margin-bottom:8px;">Ordine</div>
-            <div style="font-size:24px;font-weight:800;word-break:break-word;margin-bottom:18px;">{label}</div>
-
-            <div style="text-align:center;margin:26px 0 14px;">
-              <a href="{watch_url}" style="display:inline-block;background:#2f6dff;color:#ffffff;text-decoration:none;padding:14px 24px;border-radius:12px;font-size:16px;font-weight:700;margin:0 8px 12px;">
-                ▶ Guarda il tuo video
-              </a>
-              <a href="{download_url}" style="display:inline-block;background:#ffffff;color:#0b1b33;text-decoration:none;padding:14px 24px;border-radius:12px;font-size:16px;font-weight:700;margin:0 8px 12px;">
-                ⬇ Scarica il video
-              </a>
-            </div>
-
-            <div style="text-align:center;margin:6px 0 4px;">
-              <a href="{new_order_url}" style="display:inline-block;background:#17345f;color:#ffffff;text-decoration:none;padding:13px 22px;border-radius:12px;font-size:15px;font-weight:700;border:1px solid rgba(255,255,255,.12);">
-                ✨ Crea un altro video
-              </a>
-            </div>
-
-            <p style="margin:18px 0 0;font-size:14px;line-height:1.5;opacity:.86;text-align:center;">
-              Il tuo video resta disponibile online e può essere scaricato quando vuoi.
-            </p>
-          </div>
+        <div style="text-align:center;margin:6px 0 4px;">
+          <a href="{new_order_url}" style="display:inline-block;background:#1c3f73;color:#ffffff;text-decoration:none;padding:14px 26px;border-radius:12px;font-size:15px;font-weight:700;border:1px solid rgba(255,255,255,.22);box-shadow:0 8px 20px rgba(0,0,0,.18);">
+            ✨ Crea un altro video
+          </a>
         </div>
 
-        <div style="padding:8px 24px 24px;text-align:center;">
-          <p style="margin:10px 0 0;font-size:14px;line-height:1.5;opacity:.82;">
-            Se hai bisogno di assistenza, scrivi a
-            <a href="mailto:{SUPPORT_EMAIL}" style="color:#9ec5ff;text-decoration:none;">{SUPPORT_EMAIL}</a>
-          </p>
-
-          <p style="margin:10px 0 0;font-size:13px;opacity:.66;">
-            <a href="{site_url}" style="color:#9ec5ff;text-decoration:none;">eccomionline.com</a>
-          </p>
-
-          <p style="margin:14px 0 0;font-size:12px;opacity:.58;">
-            Eccomi Video Studio — consegna automatica completata con successo
-          </p>
-        </div>
+        <p style="margin:18px 0 0;font-size:14px;line-height:1.5;opacity:.86;text-align:center;">
+          Il tuo video resta disponibile online e può essere scaricato quando vuoi.
+        </p>
+        <p style="margin:10px 0 0;font-size:13px;line-height:1.5;opacity:.68;text-align:center;">
+          EVS è un servizio digitale di Eccomi OnLine.
+        </p>
       </div>
     </div>
-    """
+
+    <div style="padding:8px 24px 24px;text-align:center;">
+      <p style="margin:10px 0 0;font-size:14px;line-height:1.5;opacity:.82;">
+        Se hai bisogno di assistenza, scrivi a
+        <a href="mailto:{SUPPORT_EMAIL}" style="color:#9ec5ff;text-decoration:none;">{SUPPORT_EMAIL}</a>
+      </p>
+
+      <p style="margin:10px 0 0;font-size:13px;opacity:.66;">
+        <a href="{site_url}" style="color:#9ec5ff;text-decoration:none;">eccomionline.com</a>
+      </p>
+
+      <p style="margin:14px 0 0;font-size:12px;opacity:.58;">
+        Eccomi Video Studio — consegna automatica completata con successo
+      </p>
+    </div>
+  </div>
+</div>
+"""
 
     payload = {
         "from": FROM_EMAIL,
