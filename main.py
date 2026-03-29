@@ -6,6 +6,8 @@ import time
 import json
 import uuid
 import subprocess
+import re
+import unicodedata
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Optional
@@ -60,6 +62,14 @@ if SUPABASE_URL and (SUPABASE_SERVICE_ROLE_KEY or SUPABASE_KEY):
 else:
     print("⚠️ Supabase NON configurato")
 
+EMOJI_RE = re.compile(
+    "["
+    "\U0001F300-\U0001FAFF"
+    "\U00002700-\U000027BF"
+    "\U000024C2-\U0001F251"
+    "]+",
+    flags=re.UNICODE
+)
 
 # =====================================================
 # UTILS
@@ -72,10 +82,55 @@ def sanitize_text(text: str) -> str:
     if not text:
         return ""
 
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    text = text.replace("\u00a0", " ")   # spazio non separabile
-    text = text.replace("’", "'")        # apostrofo tipografico -> normale
-    text = text.replace("“", '"').replace("”", '"')
+    text = unicodedata.normalize("NFKC", text)
+
+    replacements = {
+        "\r\n": "\n",
+        "\r": "\n",
+        "\u00a0": " ",   # spazio non separabile
+        "’": "'",
+        "‘": "'",
+        "“": '"',
+        "”": '"',
+        "…": "...",
+        "–": "-",
+        "—": "-",
+        "&": " e ",
+        "%": " per cento ",
+        "@": " chiocciola ",
+        "|": " ",
+    }
+
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+
+    # togli emoji
+    text = EMOJI_RE.sub(" ", text)
+
+    # togli caratteri di controllo strani, ma lascia testo normale
+    text = "".join(
+        ch for ch in text
+        if unicodedata.category(ch)[0] != "C" or ch in "\n\t "
+    )
+
+    # trasforma troppi separatori in pause più naturali
+    text = re.sub(r"[\\/]+", ", ", text)
+    text = re.sub(r"[_~^*#<>]+", " ", text)
+
+    # riduce spazi multipli
+    text = re.sub(r"[ \t]+", " ", text)
+
+    # riduce righe multiple
+    text = re.sub(r"\n{2,}", "\n", text)
+
+    # spazi prima della punteggiatura
+    text = re.sub(r"\s+([,.;:!?])", r"\1", text)
+
+    # spazi dopo la punteggiatura, se manca
+    text = re.sub(r"([,.;:!?])([^\s])", r"\1 \2", text)
+
+    # massimo 3 punti
+    text = re.sub(r"\.{4,}", "...", text)
 
     return text.strip()[:4000]
 
