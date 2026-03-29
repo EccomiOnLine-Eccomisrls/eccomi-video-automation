@@ -757,10 +757,10 @@ def video_view(token: str):
     download_url = f"{PUBLIC_BASE_URL}/video/{token}/download"
     new_order_url = "https://eccomionline.com/products/video-ai-da-foto-parlante"
     logo_url = os.getenv("ECCOMI_LOGO_URL", "").strip()
-logo_html = (
-    f'<img class="brand-logo" src="{logo_url}" alt="Eccomi OnLine">'
-    if logo_url else ""
-)
+    logo_html = (
+        f'<img class="brand-logo" src="{logo_url}" alt="Eccomi OnLine">'
+        if logo_url else ""
+    )
 
     order_label = token
     customer_email = ""
@@ -801,9 +801,9 @@ logo_html = (
     )
 
     reel_note_html = (
-        "Versione social verticale pronta"
+        "La versione social verticale è pronta."
         if reel_url else
-        "Versione social verticale in arrivo"
+        "La versione social verticale sarà disponibile a breve."
     )
 
     return HTMLResponse(f"""
@@ -849,24 +849,24 @@ logo_html = (
       margin-bottom:20px;
       flex-wrap:wrap;
     }}
-    .brand{
-  font-size:14px;
-  letter-spacing:.08em;
-  text-transform:uppercase;
-  opacity:.72;
-}
-.brand-head{
-  display:flex;
-  align-items:center;
-  gap:12px;
-  flex-wrap:wrap;
-}
-.brand-logo{
-  height:42px;
-  width:auto;
-  display:block;
-  filter:drop-shadow(0 4px 12px rgba(0,0,0,.25));
-}
+    .brand{{
+      font-size:14px;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+      opacity:.72;
+    }}
+    .brand-head{{
+      display:flex;
+      align-items:center;
+      gap:12px;
+      flex-wrap:wrap;
+    }}
+    .brand-logo{{
+      height:42px;
+      width:auto;
+      display:block;
+      filter:drop-shadow(0 4px 12px rgba(0,0,0,.25));
+    }}
     .badge{{
       display:inline-block;
       padding:8px 12px;
@@ -998,18 +998,18 @@ logo_html = (
   <div class="wrap">
     <div class="card">
       <div class="top">
-  <div class="brand-head">
-    {logo_html}
-    <div class="brand">Eccomi Video Studio</div>
-  </div>
-  <div class="badge">✅ Video completato</div>
-</div>
+        <div class="brand-head">
+          {logo_html}
+          <div class="brand">Eccomi Video Studio</div>
+        </div>
+        <div class="badge">✅ Video completato</div>
+      </div>
 
       <div class="hero">
         <h1>🎬 Il tuo video è pronto</h1>
         <p>
-  Guardalo online, scaricalo sul tuo dispositivo o crea subito un nuovo video.
-</p>
+          Guardalo online, scaricalo sul tuo dispositivo o crea subito un nuovo video.
+        </p>
       </div>
 
       <div class="video-box">
@@ -1019,14 +1019,14 @@ logo_html = (
       </div>
 
       <div class="actions">
-  <a class="btn btn-secondary" href="{download_url}">⬇ Scarica il video</a>
-  {reel_button_html}
-  <a class="btn btn-primary" href="{new_order_url}">✨ Crea un altro video</a>
-</div>
+        <a class="btn btn-secondary" href="{download_url}">⬇ Scarica il video</a>
+        {reel_button_html}
+        <a class="btn btn-primary" href="{new_order_url}">✨ Crea un altro video</a>
+      </div>
 
       <div class="reel-note">
-  Scarica il tuo contenuto. La versione social verticale è pronta. {reel_note_html}
-</div>
+        Scarica il tuo contenuto. {reel_note_html}
+      </div>
 
       <div class="grid">
         <div class="info">
@@ -1046,8 +1046,8 @@ logo_html = (
       </div>
 
       <div class="foot">
-  EVS è un servizio digitale di Eccomi OnLine · Assistenza: {SUPPORT_EMAIL}
-</div>
+        EVS è un servizio digitale di Eccomi OnLine · Assistenza: {SUPPORT_EMAIL}
+      </div>
     </div>
   </div>
 </body>
