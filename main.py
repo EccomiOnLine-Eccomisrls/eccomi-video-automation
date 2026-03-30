@@ -639,8 +639,10 @@ async def receive_order(
 # =====================================================
 
 @app.post("/evs/preview")
-async def evs_preview(photo: UploadFile = File(...)):
-
+async def evs_preview(
+    photo: UploadFile = File(...),
+    gender: Optional[str] = Form(None)
+):
     token = str(uuid.uuid4())
 
     photo_bytes = await photo.read()
@@ -655,18 +657,19 @@ async def evs_preview(photo: UploadFile = File(...)):
     if not photo_url:
         raise HTTPException(500, "Upload foto fallito")
 
+    preview_gender = normalize_gender(gender or "female")
+
     payload = {
         "input": {
             "mode": "preview",
             "image_url": photo_url,
-            "text": "Preview video",
-            "gender": "male",
+            "text": "Ciao, questo è un esempio del tuo video creato con Eccomi Video Studio.",
+            "gender": preview_gender,
             "plan": "base"
         }
     }
 
     try:
-
         url = f"https://api.runpod.ai/v2/{RUNPOD_PREVIEW_ENDPOINT_ID}/run"
 
         r = http_request_with_retries(
