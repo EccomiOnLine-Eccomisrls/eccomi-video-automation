@@ -701,51 +701,63 @@ async def evs_preview(
 # =====================================================
 
 @app.get("/evs/preview-status/{job_id}")
-def preview_status(job_id: str):
-
+def evs_preview_status(job_id: str):
     try:
-
         url = f"https://api.runpod.ai/v2/{RUNPOD_PREVIEW_ENDPOINT_ID}/status/{job_id}"
 
         r = http_request_with_retries(
             "GET",
             url,
             headers={"Authorization": f"Bearer {RUNPOD_API_KEY}"},
-            timeout=HTTP_TIMEOUT_SHORT
+            timeout=30
         )
 
-        j = r.json()
+        data = r.json()
 
-        status = (j.get("status") or "").upper()
-
-        if status != "COMPLETED":
-            return {
-                "status": status
-            }
-
-        output = j.get("output") or {}
+        status = (data.get("status") or "").upper()
+        output = data.get("output") or {}
 
         video_url = (
             output.get("video_url")
             or output.get("video")
             or output.get("url")
             or output.get("output")
+            or ""
         )
 
-        if not video_url:
-            return {
-                "status": "COMPLETED",
-                "video_url": None
-            }
+        if status in ["IN_QUEUE", "IN_PROGRESS", "PROCESSING"]:
+            return JSONResponse({"status": "PROCESSING"})
 
-        return {
-            "status": "COMPLETED",
-            "video_url": video_url
-        }
+        if status == "COMPLETED" and video_url:
+            try:
+                test_resp = requests.get(video_url, stream=True, timeout=10)
+                ok = test_resp.status_code == 200
+                test_resp.close()
+
+                if not ok:
+                    return JSONResponse({"status": "PROCESSING"})
+            except Exception:
+                return JSONResponse({"status": "PROCESSING"})
+
+            return JSONResponse({
+                "status": "COMPLETED",
+                "video_url": video_url
+            })
+
+        if status in ["FAILED", "CANCELLED", "TIMED_OUT"]:
+            return JSONResponse({
+                "status": "FAILED",
+                "error": data.get("error") or "Preview non disponibile"
+            })
+
+        return JSONResponse({"status": "PROCESSING"})
 
     except Exception as e:
         print("Preview status error:", e)
-        raise HTTPException(500, "Errore controllo preview")
+        return JSONResponse({
+            "status": "FAILED",
+            "error": "Errore controllo stato preview"
+        }, status_code=500)
 
 # =====================================================
 # SHOPIFY WEBHOOK
