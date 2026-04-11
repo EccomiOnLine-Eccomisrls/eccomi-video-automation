@@ -401,14 +401,54 @@ def create_vertical_reel(input_mp4, output_mp4):
 # ULTRA DUBBING
 # =====================================================
 
-def create_ultra_dubbed_audio(token: str, text: str, voice_sample_url: str) -> str:
-    """
-    Questa funzione deve creare localmente l'audio finale doppiato
-    e restituire il path locale del file audio.
+import tempfile
 
-    Qui va agganciato il provider di voice cloning.
-    """
-    raise RuntimeError("Provider doppiaggio Ultra non ancora configurato")
+ULTRA_VOICE_PROVIDER = os.getenv("ULTRA_VOICE_PROVIDER", "").strip().lower()
+ULTRA_VOICE_API_KEY = os.getenv("ULTRA_VOICE_API_KEY", "").strip()
+
+
+def download_file(url: str, out_path: str):
+    r = http_request_with_retries(
+        "GET",
+        url,
+        stream=True,
+        timeout=HTTP_TIMEOUT_LONG
+    )
+    if r.status_code != 200:
+        raise RuntimeError(f"Download fallito: {url} -> {r.status_code}")
+
+    with open(out_path, "wb") as f:
+        for chunk in r.iter_content(chunk_size=8192):
+            if chunk:
+                f.write(chunk)
+
+
+def create_ultra_dubbed_audio(token: str, text: str, voice_sample_url: str) -> str:
+    if not ULTRA_VOICE_PROVIDER:
+        raise RuntimeError("ULTRA_VOICE_PROVIDER mancante")
+
+    if not ULTRA_VOICE_API_KEY:
+        raise RuntimeError("ULTRA_VOICE_API_KEY mancante")
+
+    safe_text = sanitize_text(text)
+    if not safe_text:
+        raise RuntimeError("Testo Ultra vuoto")
+
+    tmp_dir = tempfile.mkdtemp(prefix=f"ultra_{token}_")
+    sample_path = os.path.join(tmp_dir, "voice_sample.wav")
+    output_path = os.path.join(tmp_dir, "dubbed_audio.wav")
+
+    download_file(voice_sample_url, sample_path)
+
+    if not os.path.exists(sample_path) or os.path.getsize(sample_path) < 1000:
+        raise RuntimeError("Campione voce non valido o troppo piccolo")
+
+    # ADAPTER PROVIDER
+    if ULTRA_VOICE_PROVIDER == "PLACEHOLDER_PROVIDER":
+        # Qui inseriremo la logica vera del provider scelto
+        raise RuntimeError("Provider configurato come placeholder: manca implementazione reale")
+
+    raise RuntimeError(f"Provider Ultra non supportato: {ULTRA_VOICE_PROVIDER}")
 
 
 def ensure_ultra_dubbed_audio(row: dict) -> str:
