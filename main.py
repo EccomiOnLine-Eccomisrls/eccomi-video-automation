@@ -673,8 +673,7 @@ async def receive_order(
     voice_clone_consent: Optional[str] = Form(None),
     voice_mode: Optional[str] = Form(None)
 ):
-
-        token = (evs_token or "").strip() or str(uuid.uuid4())
+    token = (evs_token or "").strip() or str(uuid.uuid4())
 
     photo_bytes = await photo.read()
 
