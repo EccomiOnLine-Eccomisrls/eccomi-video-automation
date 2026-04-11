@@ -402,54 +402,84 @@ def create_vertical_reel(input_mp4, output_mp4):
 # ULTRA DUBBING
 # =====================================================
 
-import tempfile
-
-ULTRA_VOICE_PROVIDER = os.getenv("ULTRA_VOICE_PROVIDER", "").strip().lower()
-ULTRA_VOICE_API_KEY = os.getenv("ULTRA_VOICE_API_KEY", "").strip()
-
-
-def download_file(url: str, out_path: str):
-    r = http_request_with_retries(
-        "GET",
-        url,
-        stream=True,
-        timeout=HTTP_TIMEOUT_LONG
-    )
-    if r.status_code != 200:
-        raise RuntimeError(f"Download fallito: {url} -> {r.status_code}")
-
-    with open(out_path, "wb") as f:
-        for chunk in r.iter_content(chunk_size=8192):
-            if chunk:
-                f.write(chunk)
-
-
 def create_ultra_dubbed_audio(token: str, text: str, voice_sample_url: str) -> str:
-    if not ULTRA_VOICE_PROVIDER:
-        raise RuntimeError("ULTRA_VOICE_PROVIDER mancante")
+    if not RUNPOD_API_KEY:
+        raise RuntimeError("RUNPOD_API_KEY mancante")
 
-    if not ULTRA_VOICE_API_KEY:
-        raise RuntimeError("ULTRA_VOICE_API_KEY mancante")
+    if not RUNPOD_ULTRA_VOICE_ENDPOINT_ID:
+        raise RuntimeError("RUNPOD_ULTRA_VOICE_ENDPOINT_ID mancante")
 
-    safe_text = sanitize_text(text)
-    if not safe_text:
+    clean_text = sanitize_text(text)
+
+    if not clean_text:
         raise RuntimeError("Testo Ultra vuoto")
 
-    tmp_dir = tempfile.mkdtemp(prefix=f"ultra_{token}_")
-    sample_path = os.path.join(tmp_dir, "voice_sample.wav")
-    output_path = os.path.join(tmp_dir, "dubbed_audio.wav")
+    if not voice_sample_url:
+        raise RuntimeError("voice_sample_url mancante")
 
-    download_file(voice_sample_url, sample_path)
+    payload = {
+        "input": {
+            "token": token,
+            "text": clean_text,
+            "voice_sample_url": voice_sample_url,
+            "language": "it"
+        }
+    }
 
-    if not os.path.exists(sample_path) or os.path.getsize(sample_path) < 1000:
-        raise RuntimeError("Campione voce non valido o troppo piccolo")
+    submit_url = f"https://api.runpod.ai/v2/{RUNPOD_ULTRA_VOICE_ENDPOINT_ID}/run"
 
-    # ADAPTER PROVIDER
-    if ULTRA_VOICE_PROVIDER == "PLACEHOLDER_PROVIDER":
-        # Qui inseriremo la logica vera del provider scelto
-        raise RuntimeError("Provider configurato come placeholder: manca implementazione reale")
+    r = http_request_with_retries(
+        "POST",
+        submit_url,
+        headers={"Authorization": f"Bearer {RUNPOD_API_KEY}"},
+        json=payload,
+        timeout=45
+    )
 
-    raise RuntimeError(f"Provider Ultra non supportato: {ULTRA_VOICE_PROVIDER}")
+    data = r.json() if r.content else {}
+    job_id = data.get("id")
+
+    if not job_id:
+        raise RuntimeError(f"RunPod Ultra Voice job_id mancante: {data}")
+
+    started = time.time()
+
+    while time.time() - started < RUNPOD_POLL_MAX_SECONDS:
+        status_url = f"https://api.runpod.ai/v2/{RUNPOD_ULTRA_VOICE_ENDPOINT_ID}/status/{job_id}"
+
+        sr = http_request_with_retries(
+            "GET",
+            status_url,
+            headers={"Authorization": f"Bearer {RUNPOD_API_KEY}"},
+            timeout=HTTP_TIMEOUT_SHORT
+        )
+
+        sdata = sr.json() if sr.content else {}
+        status = (sdata.get("status") or "").upper()
+
+        print("ULTRA VOICE status:", status)
+
+        if status == "COMPLETED":
+            output = sdata.get("output") or {}
+
+            dubbed_audio_url = (
+                output.get("dubbed_audio_url")
+                or output.get("audio_url")
+                or output.get("url")
+                or ""
+            )
+
+            if not dubbed_audio_url:
+                raise RuntimeError(f"Ultra Voice completed senza dubbed_audio_url: {output}")
+
+            return dubbed_audio_url
+
+        if status in ["FAILED", "CANCELLED", "TIMED_OUT"]:
+            raise RuntimeError(f"Ultra Voice job failed: {sdata}")
+
+        time.sleep(RUNPOD_POLL_INTERVAL_SECONDS)
+
+    raise RuntimeError("Timeout generazione audio Ultra")
 
 
 def ensure_ultra_dubbed_audio(row: dict) -> str:
@@ -467,24 +497,14 @@ def ensure_ultra_dubbed_audio(row: dict) -> str:
     if not voice_sample_url:
         raise RuntimeError("Ultra senza voice_sample_url")
 
-    local_audio_path = create_ultra_dubbed_audio(
+    dubbed_audio_url = create_ultra_dubbed_audio(
         token=token,
         text=script_text,
         voice_sample_url=voice_sample_url
     )
 
-    if not os.path.exists(local_audio_path):
-        raise RuntimeError("Audio doppiato non creato")
-
-    dubbed_audio_url = upload_local_file_to_supabase(
-        SUPABASE_INPUTS_BUCKET,
-        f"{token}/dubbed_audio.wav",
-        local_audio_path,
-        "audio/wav"
-    )
-
     if not dubbed_audio_url:
-        raise RuntimeError("Upload dubbed_audio fallito")
+        raise RuntimeError("Ultra dubbing URL non restituito")
 
     supabase.table("video_jobs").update({
         "dubbed_audio_url": dubbed_audio_url,
