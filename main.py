@@ -398,6 +398,62 @@ def create_vertical_reel(input_mp4, output_mp4):
 
 
 # =====================================================
+# ULTRA DUBBING
+# =====================================================
+
+def create_ultra_dubbed_audio(token: str, text: str, voice_sample_url: str) -> str:
+    """
+    Questa funzione deve creare localmente l'audio finale doppiato
+    e restituire il path locale del file audio.
+
+    Qui va agganciato il provider di voice cloning.
+    """
+    raise RuntimeError("Provider doppiaggio Ultra non ancora configurato")
+
+
+def ensure_ultra_dubbed_audio(row: dict) -> str:
+    token = row.get("evs_token") or ""
+    dubbed_audio_url = row.get("dubbed_audio_url") or ""
+    script_text = sanitize_text(row.get("script_text") or "")
+    voice_sample_url = row.get("voice_sample_url") or ""
+
+    if dubbed_audio_url:
+        return dubbed_audio_url
+
+    if not script_text:
+        raise RuntimeError("Ultra senza script_text")
+
+    if not voice_sample_url:
+        raise RuntimeError("Ultra senza voice_sample_url")
+
+    local_audio_path = create_ultra_dubbed_audio(
+        token=token,
+        text=script_text,
+        voice_sample_url=voice_sample_url
+    )
+
+    if not os.path.exists(local_audio_path):
+        raise RuntimeError("Audio doppiato non creato")
+
+    dubbed_audio_url = upload_local_file_to_supabase(
+        SUPABASE_INPUTS_BUCKET,
+        f"{token}/dubbed_audio.wav",
+        local_audio_path,
+        "audio/wav"
+    )
+
+    if not dubbed_audio_url:
+        raise RuntimeError("Upload dubbed_audio fallito")
+
+    supabase.table("video_jobs").update({
+        "dubbed_audio_url": dubbed_audio_url,
+        "updated_at": now_iso()
+    }).eq("evs_token", token).execute()
+
+    return dubbed_audio_url
+
+
+# =====================================================
 # RUNPOD POLLING
 # =====================================================
 def poll_runpod(token, job_id):
@@ -519,21 +575,41 @@ def runpod_submit(token):
         print("Job già avviato")
         return
 
+    plan = normalize_plan(row.get("plan"))
     gender = normalize_gender(row.get("gender"))
+
+    runpod_audio_url = row.get("audio_url") or ""
+    runpod_text = sanitize_text(row.get("script_text") or "")
+
+    if plan == "ultra":
+        try:
+            runpod_audio_url = ensure_ultra_dubbed_audio(row)
+            runpod_text = ""
+        except Exception as e:
+            print("❌ Ultra dubbing error:", e)
+
+            supabase.table("video_jobs").update({
+                "status": "failed",
+                "updated_at": now_iso()
+            }).eq("evs_token", token).execute()
+
+            return
+
+    elif runpod_audio_url:
+        runpod_text = ""
 
     payload = {
         "input": {
             "token": token,
-            "plan": normalize_plan(row.get("plan")),
+            "plan": plan,
             "image_url": row.get("photo_url"),
-            "audio_url": row.get("audio_url"),
-            "text": sanitize_text(row.get("script_text")),
+            "audio_url": runpod_audio_url,
+            "text": runpod_text,
             "gender": gender
         }
     }
 
     try:
-
         url = f"https://api.runpod.ai/v2/{RUNPOD_ENDPOINT_ID}/run"
 
         r = http_request_with_retries(
@@ -545,7 +621,6 @@ def runpod_submit(token):
         )
 
         data = r.json() if r.content else {}
-
         job_id = data.get("id")
 
         if not job_id:
@@ -590,13 +665,16 @@ async def receive_order(
     email: str = Form(...),
     photo: UploadFile = File(...),
     audio: Optional[UploadFile] = File(None),
+    voice_sample: Optional[UploadFile] = File(None),
     script_text: str = Form(""),
     gender: Optional[str] = Form(None),
     plan: Optional[str] = Form("base"),
-    evs_token: Optional[str] = Form(None)
+    evs_token: Optional[str] = Form(None),
+    voice_clone_consent: Optional[str] = Form(None),
+    voice_mode: Optional[str] = Form(None)
 ):
 
-    token = (evs_token or "").strip() or str(uuid.uuid4())
+        token = (evs_token or "").strip() or str(uuid.uuid4())
 
     photo_bytes = await photo.read()
 
@@ -619,16 +697,49 @@ async def receive_order(
             audio.content_type or "audio/wav"
         )
 
+    voice_sample_url = None
+
+    if voice_sample and voice_sample.filename:
+        voice_sample_bytes = await voice_sample.read()
+
+        ext = os.path.splitext(voice_sample.filename)[1].lower() or ".wav"
+        safe_name = f"voice_sample{ext}"
+
+        voice_sample_url = upload_input_to_supabase(
+            token,
+            safe_name,
+            voice_sample_bytes,
+            voice_sample.content_type or "audio/wav"
+        )
+
+    plan_norm = normalize_plan(plan)
+    script_text_clean = sanitize_text(script_text)
+
+    clone_consent_bool = str(voice_clone_consent).lower() in ["true", "1", "yes", "on"]
+
+    if plan_norm == "ultra":
+        if not script_text_clean:
+            raise HTTPException(400, "Ultra richiede un testo")
+        if not voice_sample_url:
+            raise HTTPException(400, "Ultra richiede un campione voce")
+        if not clone_consent_bool:
+            raise HTTPException(400, "Devi confermare il diritto di usare questa voce")
+
     supabase.table("video_jobs").upsert({
         "evs_token": token,
         "customer_email": email,
-        "plan": normalize_plan(plan),
+        "plan": plan_norm,
         "status": "waiting_payment",
         "gender": normalize_gender(gender),
-        "script_text": sanitize_text(script_text),
+        "script_text": script_text_clean,
+        "script_text_original": script_text,
+        "script_text_sanitized": script_text_clean,
         "photo_url": photo_url,
         "audio_url": audio_url,
         "has_audio": bool(audio_url),
+        "voice_sample_url": voice_sample_url,
+        "voice_clone_consent": clone_consent_bool,
+        "voice_mode": "cloned" if plan_norm == "ultra" else ("audio" if audio_url else "standard"),
         "updated_at": now_iso()
     }, on_conflict="evs_token").execute()
 
