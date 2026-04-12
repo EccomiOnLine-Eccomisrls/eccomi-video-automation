@@ -793,7 +793,6 @@ async def receive_order(
         "gender": normalize_gender(gender),
         "script_text": script_text_clean,
         "script_text_original": script_text,
-        "script_text_sanitized": script_text_clean,
         "photo_url": photo_url,
         "audio_url": audio_url,
         "has_audio": bool(audio_url),
