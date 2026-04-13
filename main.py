@@ -460,25 +460,29 @@ def create_ultra_dubbed_audio(token: str, text: str, voice_sample_url: str) -> s
         print("ULTRA VOICE status:", status)
 
         if status == "COMPLETED":
-    output = sdata.get("output") or {}
+            output = sdata.get("output") or {}
 
-    error_message = output.get("error") or ""
-    traceback_text = output.get("traceback") or ""
+            error_message = output.get("error") or ""
+            traceback_text = output.get("traceback") or ""
 
-    if error_message:
-        raise RuntimeError(f"Ultra Voice error: {error_message}\n{traceback_text}")
+            if error_message:
+                raise RuntimeError(
+                    f"Ultra Voice error: {error_message}\n{traceback_text}"
+                )
 
-    dubbed_audio_url = (
-        output.get("dubbed_audio_url")
-        or output.get("audio_url")
-        or output.get("url")
-        or ""
-    )
+            dubbed_audio_url = (
+                output.get("dubbed_audio_url")
+                or output.get("audio_url")
+                or output.get("url")
+                or ""
+            )
 
-    if not dubbed_audio_url:
-        raise RuntimeError(f"Ultra Voice completed senza dubbed_audio_url: {output}")
+            if not dubbed_audio_url:
+                raise RuntimeError(
+                    f"Ultra Voice completed senza dubbed_audio_url: {output}"
+                )
 
-    return dubbed_audio_url
+            return dubbed_audio_url
 
         if status in ["FAILED", "CANCELLED", "TIMED_OUT"]:
             raise RuntimeError(f"Ultra Voice job failed: {sdata}")
