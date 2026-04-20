@@ -670,15 +670,16 @@ def runpod_submit(token):
         runpod_text = ""
 
     payload = {
-        "input": {
-            "token": token,
-            "plan": plan,
-            "image_url": row.get("photo_url"),
-            "audio_url": runpod_audio_url,
-            "text": runpod_text,
-            "gender": gender
-        }
+    "input": {
+        "token": token,
+        "plan": plan,
+        "image_url": row.get("photo_url"),
+        "audio_url": runpod_audio_url,
+        "text": runpod_text,
+        "gender": gender,
+        "voice_profile": row.get("voice_profile") or ""
     }
+}
 
     try:
         url = f"https://api.runpod.ai/v2/{RUNPOD_ENDPOINT_ID}/run"
@@ -742,7 +743,8 @@ async def receive_order(
     plan: Optional[str] = Form("base"),
     evs_token: Optional[str] = Form(None),
     voice_clone_consent: Optional[str] = Form(None),
-    voice_mode: Optional[str] = Form(None)
+    voice_mode: Optional[str] = Form(None),
+    voice_profile: Optional[str] = Form("")
 ):
     token = (evs_token or "").strip() or str(uuid.uuid4())
 
@@ -783,34 +785,28 @@ async def receive_order(
         )
 
     plan_norm = normalize_plan(plan)
-    script_text_clean = sanitize_text(script_text)
+script_text_clean = sanitize_text(script_text)
+voice_profile_clean = (voice_profile or "").strip()
 
-    clone_consent_bool = str(voice_clone_consent).lower() in ["true", "1", "yes", "on"]
+clone_consent_bool = str(voice_clone_consent).lower() in ["true", "1", "yes", "on"]
 
-    if plan_norm == "ultra":
-        if not script_text_clean:
-            raise HTTPException(400, "Ultra richiede un testo")
-        if not voice_sample_url:
-            raise HTTPException(400, "Ultra richiede un campione voce")
-        if not clone_consent_bool:
-            raise HTTPException(400, "Devi confermare il diritto di usare questa voce")
-
-    supabase.table("video_jobs").upsert({
-        "evs_token": token,
-        "customer_email": email,
-        "plan": plan_norm,
-        "status": "waiting_payment",
-        "gender": normalize_gender(gender),
-        "script_text": script_text_clean,
-        "script_text_original": script_text,
-        "photo_url": photo_url,
-        "audio_url": audio_url,
-        "has_audio": bool(audio_url),
-        "voice_sample_url": voice_sample_url,
-        "voice_clone_consent": clone_consent_bool,
-        "voice_mode": "cloned" if plan_norm == "ultra" else ("audio" if audio_url else "standard"),
-        "updated_at": now_iso()
-    }, on_conflict="evs_token").execute()
+supabase.table("video_jobs").upsert({
+    "evs_token": token,
+    "customer_email": email,
+    "plan": plan_norm,
+    "status": "waiting_payment",
+    "gender": normalize_gender(gender),
+    "script_text": script_text_clean,
+    "script_text_original": script_text,
+    "photo_url": photo_url,
+    "audio_url": audio_url,
+    "has_audio": bool(audio_url),
+    "voice_sample_url": voice_sample_url,
+    "voice_clone_consent": clone_consent_bool,
+    "voice_mode": "cloned" if plan_norm == "ultra" else ("audio" if audio_url else "standard"),
+    "voice_profile": voice_profile_clean if (not audio_url and plan_norm != "ultra") else "",
+    "updated_at": now_iso()
+}, on_conflict="evs_token").execute()
 
     return JSONResponse({"ok": True, "evs_token": token})
 
