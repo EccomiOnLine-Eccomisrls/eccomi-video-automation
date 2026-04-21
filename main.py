@@ -790,23 +790,22 @@ voice_profile_clean = (voice_profile or "").strip()
 
 clone_consent_bool = str(voice_clone_consent).lower() in ["true", "1", "yes", "on"]
 
-supabase.table("video_jobs").upsert({
-    "evs_token": token,
-    "customer_email": email,
-    "plan": plan_norm,
-    "status": "waiting_payment",
-    "gender": normalize_gender(gender),
-    "script_text": script_text_clean,
-    "script_text_original": script_text,
-    "photo_url": photo_url,
-    "audio_url": audio_url,
-    "has_audio": bool(audio_url),
-    "voice_sample_url": voice_sample_url,
-    "voice_clone_consent": clone_consent_bool,
-    "voice_mode": "cloned" if plan_norm == "ultra" else ("audio" if audio_url else "standard"),
-    "voice_profile": voice_profile_clean if (not audio_url and plan_norm != "ultra") else "",
-    "updated_at": now_iso()
-}, on_conflict="evs_token").execute()
+    supabase.table("video_jobs").upsert({
+        "evs_token": token,
+        "customer_email": email,
+        "plan": plan_norm,
+        "status": "waiting_payment",
+        "gender": normalize_gender(gender),
+        "script_text": script_text_clean,
+        "script_text_original": script_text,
+        "photo_url": photo_url,
+        "audio_url": audio_url,
+        "has_audio": bool(audio_url),
+        "voice_sample_url": voice_sample_url,
+        "voice_clone_consent": clone_consent_bool,
+        "voice_mode": "cloned" if plan_norm == "ultra" else ("audio" if audio_url else "standard"),
+        "updated_at": now_iso()
+    }, on_conflict="evs_token").execute()
 
     return JSONResponse({"ok": True, "evs_token": token})
 
