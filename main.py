@@ -551,7 +551,7 @@ def poll_runpod(token, job_id):
 
             print("RunPod status:", status)
 
-                        if status == "COMPLETED":
+            if status == "COMPLETED":
 
                 output = data.get("output") or {}
 
@@ -641,7 +641,6 @@ def poll_runpod(token, job_id):
                     print("ℹ️ Reel non restituito da RunPod")
 
                 return
-
 
             if status in ["FAILED", "CANCELLED"]:
                 supabase.table("video_jobs").update({
