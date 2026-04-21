@@ -265,19 +265,25 @@ def send_video_ready_email(
         "html": html,
     }
 
-    try:
-        r = requests.post(
-            "https://api.resend.com/emails",
-            headers={
-                "Authorization": f"Bearer {RESEND_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=30,
-        )
-        print("📩 Resend status:", r.status_code, r.text)
-    except Exception as e:
-        print("❌ Errore invio email:", e)        
+    if not RESEND_API_KEY or not FROM_EMAIL or not to_email:
+    raise RuntimeError("RESEND_API_KEY / FROM_EMAIL / destinatario mancanti")
+
+r = requests.post(
+    "https://api.resend.com/emails",
+    headers={
+        "Authorization": f"Bearer {RESEND_API_KEY}",
+        "Content-Type": "application/json",
+    },
+    json=payload,
+    timeout=30,
+)
+
+print("📩 Resend status:", r.status_code, r.text)
+
+if r.status_code >= 400:
+    raise RuntimeError(f"Resend error {r.status_code}: {r.text}")
+
+return True        
 
 
 # =====================================================
@@ -581,39 +587,64 @@ def poll_runpod(token, job_id):
                     customer_email = email_res.data[0].get("customer_email") or ""
                     order_label = email_res.data[0].get("shopify_order_name") or ""
 
-                payload = {
-                    "status": "done",
-                    "video_url": delivery_page,
-                    "video_supabase_url": video_url,
-                    "video_reel_url": reel_url,
-                    "runpod_job_id": job_id,
-                    "processing_seconds": int(time.time() - started),
-                    "finished_at": now_iso(),
-                    "updated_at": now_iso()
-                }
+ payload = {
+    "status": "done",
+    "video_url": delivery_page,
+    "video_supabase_url": video_url,
+    "video_reel_url": reel_url,
+    "runpod_job_id": job_id,
+    "processing_seconds": int(time.time() - started),
+    "finished_at": now_iso(),
+    "updated_at": now_iso()
+}
 
-                response = supabase.table("video_jobs")\
-                    .update(payload)\
-                    .eq("evs_token", token)\
-                    .execute()
+response = supabase.table("video_jobs")\
+    .update(payload)\
+    .eq("evs_token", token)\
+    .execute()
 
-                print("Supabase update:", response.data)
+print("Supabase update:", response.data)
 
-                if customer_email:
-                    send_video_ready_email(
-                        to_email=customer_email,
-                        token=token,
-                        watch_url=delivery_page,
-                        download_url=download_url,
-                        order_label=order_label
-                    )
+if customer_email:
+    try:
+        send_video_ready_email(
+            to_email=customer_email,
+            token=token,
+            watch_url=delivery_page,
+            download_url=download_url,
+            order_label=order_label
+        )
 
-                if reel_url:
-                    print("✅ Reel ricevuto da RunPod:", reel_url)
-                else:
-                    print("ℹ️ Reel non restituito da RunPod")
+        supabase.table("video_jobs").update({
+            "email_sent": True,
+            "email_sent_at": now_iso(),
+            "email_error": "",
+            "updated_at": now_iso()
+        }).eq("evs_token", token).execute()
 
-                return
+    except Exception as e:
+        supabase.table("video_jobs").update({
+            "email_sent": False,
+            "email_sent_at": None,
+            "email_error": str(e)[:1000],
+            "updated_at": now_iso()
+        }).eq("evs_token", token).execute()
+
+        print("❌ Invio email fallito:", e)
+else:
+    supabase.table("video_jobs").update({
+        "email_sent": False,
+        "email_sent_at": None,
+        "email_error": "customer_email mancante",
+        "updated_at": now_iso()
+    }).eq("evs_token", token).execute()
+
+if reel_url:
+    print("✅ Reel ricevuto da RunPod:", reel_url)
+else:
+    print("ℹ️ Reel non restituito da RunPod")
+
+return
 
             if status in ["FAILED", "CANCELLED"]:
                 supabase.table("video_jobs").update({
@@ -793,23 +824,26 @@ async def receive_order(
             raise HTTPException(400, "Devi confermare il diritto di usare questa voce")
 
     supabase.table("video_jobs").upsert({
-        "evs_token": token,
-        "customer_email": email,
-        "plan": plan_norm,
-        "status": "waiting_payment",
-        "gender": normalize_gender(gender),
-        "script_text": script_text_clean,
-        "script_text_original": script_text,
-        "photo_url": photo_url,
-        "audio_url": audio_url,
-        "has_audio": bool(audio_url),
-        "voice_sample_url": voice_sample_url,
-        "voice_clone_consent": clone_consent_bool,
-        "voice_mode": "cloned" if plan_norm == "ultra" else ("audio" if audio_url else "standard"),
-        "updated_at": now_iso()
-    }, on_conflict="evs_token").execute()
-
-    return JSONResponse({"ok": True, "evs_token": token})
+    "evs_token": token,
+    "customer_email": email,
+    "plan": plan_norm,
+    "status": "waiting_payment",
+    "gender": normalize_gender(gender),
+    "script_text": script_text_clean,
+    "script_text_original": script_text,
+    "script_text_sanitized": script_text_clean,
+    "photo_url": photo_url,
+    "audio_url": audio_url,
+    "has_audio": bool(audio_url),
+    "voice_sample_url": voice_sample_url,
+    "voice_clone_consent": clone_consent_bool,
+    "voice_mode": "cloned" if plan_norm == "ultra" else ("audio" if audio_url else "standard"),
+    "voice_profile": (voice_profile or "").strip(),
+    "email_sent": False,
+    "email_sent_at": None,
+    "email_error": "",
+    "updated_at": now_iso()
+}, on_conflict="evs_token").execute()
 
 # =====================================================
 # AI PREVIEW
