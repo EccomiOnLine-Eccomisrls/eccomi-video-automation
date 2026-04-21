@@ -1,4 +1,4 @@
-import os
+Dimport os
 import hmac
 import hashlib
 import base64
@@ -181,10 +181,6 @@ def send_video_ready_email(
     download_url: str,
     order_label: str = ""
 ):
-    if not RESEND_API_KEY or not FROM_EMAIL or not to_email:
-        print("⚠️ Email non inviata: RESEND_API_KEY / FROM_EMAIL / destinatario mancanti")
-        return
-
     label = order_label or token
     subject = "🎬 Il tuo video EVS è pronto"
 
@@ -266,24 +262,24 @@ def send_video_ready_email(
     }
 
     if not RESEND_API_KEY or not FROM_EMAIL or not to_email:
-    raise RuntimeError("RESEND_API_KEY / FROM_EMAIL / destinatario mancanti")
+        raise RuntimeError("RESEND_API_KEY / FROM_EMAIL / destinatario mancanti")
 
-r = requests.post(
-    "https://api.resend.com/emails",
-    headers={
-        "Authorization": f"Bearer {RESEND_API_KEY}",
-        "Content-Type": "application/json",
-    },
-    json=payload,
-    timeout=30,
-)
+    r = requests.post(
+        "https://api.resend.com/emails",
+        headers={
+            "Authorization": f"Bearer {RESEND_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=30,
+    )
 
-print("📩 Resend status:", r.status_code, r.text)
+    print("📩 Resend status:", r.status_code, r.text)
 
-if r.status_code >= 400:
-    raise RuntimeError(f"Resend error {r.status_code}: {r.text}")
+    if r.status_code >= 400:
+        raise RuntimeError(f"Resend error {r.status_code}: {r.text}")
 
-return True        
+    return True        
 
 
 # =====================================================
@@ -587,64 +583,65 @@ def poll_runpod(token, job_id):
                     customer_email = email_res.data[0].get("customer_email") or ""
                     order_label = email_res.data[0].get("shopify_order_name") or ""
 
- payload = {
-    "status": "done",
-    "video_url": delivery_page,
-    "video_supabase_url": video_url,
-    "video_reel_url": reel_url,
-    "runpod_job_id": job_id,
-    "processing_seconds": int(time.time() - started),
-    "finished_at": now_iso(),
-    "updated_at": now_iso()
-}
+                                payload = {
+                    "status": "done",
+                    "video_url": delivery_page,
+                    "video_supabase_url": video_url,
+                    "video_reel_url": reel_url,
+                    "runpod_job_id": job_id,
+                    "processing_seconds": int(time.time() - started),
+                    "finished_at": now_iso(),
+                    "updated_at": now_iso()
+                }
 
-response = supabase.table("video_jobs")\
-    .update(payload)\
-    .eq("evs_token", token)\
-    .execute()
+                response = supabase.table("video_jobs")\
+                    .update(payload)\
+                    .eq("evs_token", token)\
+                    .execute()
 
-print("Supabase update:", response.data)
+                print("Supabase update:", response.data)
 
-if customer_email:
-    try:
-        send_video_ready_email(
-            to_email=customer_email,
-            token=token,
-            watch_url=delivery_page,
-            download_url=download_url,
-            order_label=order_label
-        )
+                if customer_email:
+                    try:
+                        send_video_ready_email(
+                            to_email=customer_email,
+                            token=token,
+                            watch_url=delivery_page,
+                            download_url=download_url,
+                            order_label=order_label
+                        )
 
-        supabase.table("video_jobs").update({
-            "email_sent": True,
-            "email_sent_at": now_iso(),
-            "email_error": "",
-            "updated_at": now_iso()
-        }).eq("evs_token", token).execute()
+                        supabase.table("video_jobs").update({
+                            "email_sent": True,
+                            "email_sent_at": now_iso(),
+                            "email_error": "",
+                            "updated_at": now_iso()
+                        }).eq("evs_token", token).execute()
 
-    except Exception as e:
-        supabase.table("video_jobs").update({
-            "email_sent": False,
-            "email_sent_at": None,
-            "email_error": str(e)[:1000],
-            "updated_at": now_iso()
-        }).eq("evs_token", token).execute()
+                    except Exception as e:
+                        supabase.table("video_jobs").update({
+                            "email_sent": False,
+                            "email_sent_at": None,
+                            "email_error": str(e)[:1000],
+                            "updated_at": now_iso()
+                        }).eq("evs_token", token).execute()
 
-        print("❌ Invio email fallito:", e)
-else:
-    supabase.table("video_jobs").update({
-        "email_sent": False,
-        "email_sent_at": None,
-        "email_error": "customer_email mancante",
-        "updated_at": now_iso()
-    }).eq("evs_token", token).execute()
+                        print("❌ Invio email fallito:", e)
+                else:
+                    supabase.table("video_jobs").update({
+                        "email_sent": False,
+                        "email_sent_at": None,
+                        "email_error": "customer_email mancante",
+                        "updated_at": now_iso()
+                    }).eq("evs_token", token).execute()
 
-if reel_url:
-    print("✅ Reel ricevuto da RunPod:", reel_url)
-else:
-    print("ℹ️ Reel non restituito da RunPod")
+                if reel_url:
+                    print("✅ Reel ricevuto da RunPod:", reel_url)
+                else:
+                    print("ℹ️ Reel non restituito da RunPod")
 
-return
+                return
+
 
             if status in ["FAILED", "CANCELLED"]:
                 supabase.table("video_jobs").update({
@@ -844,6 +841,8 @@ async def receive_order(
     "email_error": "",
     "updated_at": now_iso()
 }, on_conflict="evs_token").execute()
+
+    return JSONResponse({"ok": True, "evs_token": token})
 
 # =====================================================
 # AI PREVIEW
