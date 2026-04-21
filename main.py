@@ -1,4 +1,4 @@
-Dimport os
+import os
 import hmac
 import hashlib
 import base64
@@ -551,7 +551,7 @@ def poll_runpod(token, job_id):
 
             print("RunPod status:", status)
 
-            if status == "COMPLETED":
+                        if status == "COMPLETED":
 
                 output = data.get("output") or {}
 
@@ -583,7 +583,7 @@ def poll_runpod(token, job_id):
                     customer_email = email_res.data[0].get("customer_email") or ""
                     order_label = email_res.data[0].get("shopify_order_name") or ""
 
-                                payload = {
+                payload = {
                     "status": "done",
                     "video_url": delivery_page,
                     "video_supabase_url": video_url,
@@ -821,26 +821,26 @@ async def receive_order(
             raise HTTPException(400, "Devi confermare il diritto di usare questa voce")
 
     supabase.table("video_jobs").upsert({
-    "evs_token": token,
-    "customer_email": email,
-    "plan": plan_norm,
-    "status": "waiting_payment",
-    "gender": normalize_gender(gender),
-    "script_text": script_text_clean,
-    "script_text_original": script_text,
-    "script_text_sanitized": script_text_clean,
-    "photo_url": photo_url,
-    "audio_url": audio_url,
-    "has_audio": bool(audio_url),
-    "voice_sample_url": voice_sample_url,
-    "voice_clone_consent": clone_consent_bool,
-    "voice_mode": "cloned" if plan_norm == "ultra" else ("audio" if audio_url else "standard"),
-    "voice_profile": (voice_profile or "").strip(),
-    "email_sent": False,
-    "email_sent_at": None,
-    "email_error": "",
-    "updated_at": now_iso()
-}, on_conflict="evs_token").execute()
+        "evs_token": token,
+        "customer_email": email,
+        "plan": plan_norm,
+        "status": "waiting_payment",
+        "gender": normalize_gender(gender),
+        "script_text": script_text_clean,
+        "script_text_original": script_text,
+        "script_text_sanitized": script_text_clean,
+        "photo_url": photo_url,
+        "audio_url": audio_url,
+        "has_audio": bool(audio_url),
+        "voice_sample_url": voice_sample_url,
+        "voice_clone_consent": clone_consent_bool,
+        "voice_mode": "cloned" if plan_norm == "ultra" else ("audio" if audio_url else "standard"),
+        "voice_profile": (voice_profile or "").strip(),
+        "email_sent": False,
+        "email_sent_at": None,
+        "email_error": "",
+        "updated_at": now_iso()
+    }, on_conflict="evs_token").execute()
 
     return JSONResponse({"ok": True, "evs_token": token})
 
