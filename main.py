@@ -744,7 +744,7 @@ async def receive_order(
     evs_token: Optional[str] = Form(None),
     voice_clone_consent: Optional[str] = Form(None),
     voice_mode: Optional[str] = Form(None),
-    voice_profile: Optional[str] = Form("")
+    voice_profile: Optional[str] = Form(None),
 ):
     token = (evs_token or "").strip() or str(uuid.uuid4())
 
@@ -758,10 +758,8 @@ async def receive_order(
     )
 
     audio_url = None
-
     if audio and audio.filename:
         audio_bytes = await audio.read()
-
         audio_url = upload_input_to_supabase(
             token,
             "audio.wav",
@@ -770,10 +768,8 @@ async def receive_order(
         )
 
     voice_sample_url = None
-
     if voice_sample and voice_sample.filename:
         voice_sample_bytes = await voice_sample.read()
-
         ext = os.path.splitext(voice_sample.filename)[1].lower() or ".wav"
         safe_name = f"voice_sample{ext}"
 
@@ -785,10 +781,16 @@ async def receive_order(
         )
 
     plan_norm = normalize_plan(plan)
-script_text_clean = sanitize_text(script_text)
-voice_profile_clean = (voice_profile or "").strip()
+    script_text_clean = sanitize_text(script_text)
+    clone_consent_bool = str(voice_clone_consent).lower() in ["true", "1", "yes", "on"]
 
-clone_consent_bool = str(voice_clone_consent).lower() in ["true", "1", "yes", "on"]
+    if plan_norm == "ultra":
+        if not script_text_clean:
+            raise HTTPException(400, "Ultra richiede un testo")
+        if not voice_sample_url:
+            raise HTTPException(400, "Ultra richiede un campione voce")
+        if not clone_consent_bool:
+            raise HTTPException(400, "Devi confermare il diritto di usare questa voce")
 
     supabase.table("video_jobs").upsert({
         "evs_token": token,
