@@ -564,6 +564,13 @@ def poll_runpod(token, job_id):
                 reel_url = output.get("reel_url")
 
                 if not video_url:
+                    supabase.table("video_jobs").update({
+                        "status": "failed",
+                        "email_sent": False,
+                        "email_error": "RunPod completed senza video_url",
+                        "updated_at": now_iso()
+                    }).eq("evs_token", token).execute()
+
                     print("❌ RunPod completed ma senza video_url")
                     return
 
@@ -645,6 +652,8 @@ def poll_runpod(token, job_id):
             if status in ["FAILED", "CANCELLED", "TIMED_OUT"]:
                 supabase.table("video_jobs").update({
                     "status": "failed",
+                    "email_sent": False,
+                    "email_error": f"RunPod status: {status}",
                     "updated_at": now_iso()
                 }).eq("evs_token", token).execute()
                 return
@@ -656,13 +665,13 @@ def poll_runpod(token, job_id):
         waited += RUNPOD_POLL_INTERVAL_SECONDS
 
     supabase.table("video_jobs").update({
-    "status": "failed",
-    "email_sent": False,
-    "email_error": "Timeout polling RunPod",
-    "updated_at": now_iso()
-}).eq("evs_token", token).execute()
+        "status": "failed",
+        "email_sent": False,
+        "email_error": "Timeout polling RunPod",
+        "updated_at": now_iso()
+    }).eq("evs_token", token).execute()
 
-print("❌ Polling timeout RunPod:", token)
+    print("❌ Polling timeout RunPod:", token)
 
 # =====================================================
 # RUNPOD SUBMIT
