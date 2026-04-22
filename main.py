@@ -642,7 +642,7 @@ def poll_runpod(token, job_id):
 
                 return
 
-            if status in ["FAILED", "CANCELLED"]:
+            if status in ["FAILED", "CANCELLED", "TIMED_OUT"]:
                 supabase.table("video_jobs").update({
                     "status": "failed",
                     "updated_at": now_iso()
@@ -654,6 +654,15 @@ def poll_runpod(token, job_id):
 
         time.sleep(RUNPOD_POLL_INTERVAL_SECONDS)
         waited += RUNPOD_POLL_INTERVAL_SECONDS
+
+    supabase.table("video_jobs").update({
+    "status": "failed",
+    "email_sent": False,
+    "email_error": "Timeout polling RunPod",
+    "updated_at": now_iso()
+}).eq("evs_token", token).execute()
+
+print("❌ Polling timeout RunPod:", token)
 
 # =====================================================
 # RUNPOD SUBMIT
