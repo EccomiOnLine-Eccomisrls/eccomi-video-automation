@@ -86,9 +86,11 @@ def _run_generation(body: GrokVideoRequest):
             timeout=60,
         )
     except requests.RequestException as exc:
+        print(f"GROK_VIDEO_START_NETWORK_ERROR {exc}", flush=True)
         raise HTTPException(status_code=502, detail=f"xAI request failed: {exc}")
 
     if response.status_code >= 400:
+        print(f"GROK_VIDEO_START_PROVIDER_ERROR status={response.status_code} body={response.text[:1500]}", flush=True)
         raise HTTPException(
             status_code=502,
             detail={"provider_status": response.status_code, "provider_body": response.text[:2000]},
@@ -97,7 +99,10 @@ def _run_generation(body: GrokVideoRequest):
     started = response.json()
     request_id = started.get("request_id")
     if not request_id:
+        print(f"GROK_VIDEO_START_NO_ID body={started}", flush=True)
         raise HTTPException(status_code=502, detail={"error": "xAI request_id missing", "provider": started})
+
+    print(f"GROK_VIDEO_STARTED request_id={request_id} model={XAI_VIDEO_MODEL} duration={body.duration}", flush=True)
 
     if not body.poll:
         return {"ok": True, "provider": "xai", "request_id": request_id, "status": "submitted"}
@@ -111,9 +116,11 @@ def _run_generation(body: GrokVideoRequest):
                 timeout=30,
             )
         except requests.RequestException as exc:
+            print(f"GROK_VIDEO_POLL_NETWORK_ERROR request_id={request_id} error={exc}", flush=True)
             raise HTTPException(status_code=502, detail=f"xAI polling failed: {exc}")
 
         if polled.status_code >= 400:
+            print(f"GROK_VIDEO_POLL_PROVIDER_ERROR request_id={request_id} status={polled.status_code} body={polled.text[:1500]}", flush=True)
             raise HTTPException(
                 status_code=502,
                 detail={"provider_status": polled.status_code, "provider_body": polled.text[:2000]},
@@ -125,22 +132,30 @@ def _run_generation(body: GrokVideoRequest):
             video = result.get("video") or {}
             usage = result.get("usage") or {}
             file_output = video.get("file_output") or result.get("file_output") or {}
+            video_url = video.get("url")
+            public_url = file_output.get("public_url") or result.get("public_url")
+            print(
+                f"GROK_VIDEO_DONE request_id={request_id} video_url={video_url} public_url={public_url} duration={video.get('duration')} usage={usage}",
+                flush=True,
+            )
             return {
                 "ok": True,
                 "provider": "xai",
                 "model": result.get("model") or XAI_VIDEO_MODEL,
                 "request_id": request_id,
                 "status": "done",
-                "video_url": video.get("url"),
-                "public_url": file_output.get("public_url") or result.get("public_url"),
+                "video_url": video_url,
+                "public_url": public_url,
                 "duration": video.get("duration"),
                 "usage": usage,
                 "raw": result,
             }
         if status in {"failed", "expired", "cancelled", "canceled"}:
+            print(f"GROK_VIDEO_FAILED request_id={request_id} status={status} result={result}", flush=True)
             raise HTTPException(status_code=502, detail={"error": f"xAI generation {status}", "provider": result})
         time.sleep(5)
 
+    print(f"GROK_VIDEO_PROCESSING request_id={request_id} timeout={body.poll_timeout_seconds}", flush=True)
     return {
         "ok": True,
         "provider": "xai",
