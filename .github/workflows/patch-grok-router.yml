@@ -1,0 +1,44 @@
+name: Patch Grok router into EVS
+
+on:
+  push:
+    paths:
+      - '.github/workflows/patch-grok-router.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Wire router
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('main.py')
+          s = p.read_text()
+          if 'from grok_router import router as grok_router' not in s:
+              marker = 'from supabase import create_client, Client\n'
+              if marker not in s:
+                  raise SystemExit('import marker not found')
+              s = s.replace(marker, marker + 'from grok_router import router as grok_router\n', 1)
+          if 'app.include_router(grok_router)' not in s:
+              marker = 'app = FastAPI(title="EVS FINAL")\n'
+              if marker not in s:
+                  raise SystemExit('FastAPI marker not found')
+              s = s.replace(marker, marker + 'app.include_router(grok_router)\n', 1)
+          p.write_text(s)
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add main.py
+          if git diff --cached --quiet; then
+            echo 'No patch needed'
+          else
+            git commit -m 'feat: enable xAI Grok video routes'
+            git push
+          fi
