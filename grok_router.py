@@ -12,6 +12,7 @@ router = APIRouter(prefix="/xai", tags=["xai"])
 XAI_API_KEY = os.getenv("XAI_API_KEY", "").strip()
 EVS_GROK_ADMIN_TOKEN = os.getenv("EVS_GROK_ADMIN_TOKEN", "").strip()
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 XAI_VIDEO_MODEL = os.getenv("XAI_VIDEO_MODEL", "grok-imagine-video-1.5").strip()
 XAI_BASE_URL = os.getenv("XAI_BASE_URL", "https://api.x.ai/v1").rstrip("/")
 
@@ -32,16 +33,31 @@ def _admin_secret() -> str:
     return EVS_GROK_ADMIN_TOKEN or SUPABASE_SERVICE_ROLE_KEY
 
 
+def _is_verified_supabase_service_role(token: str) -> bool:
+    if not token or not SUPABASE_URL:
+        return False
+    try:
+        r = requests.get(
+            f"{SUPABASE_URL}/auth/v1/admin/users?page=1&per_page=1",
+            headers={"Authorization": f"Bearer {token}", "apikey": token},
+            timeout=15,
+        )
+        return r.status_code == 200
+    except requests.RequestException:
+        return False
+
+
 def _require_admin(authorization: Optional[str], x_evs_admin_key: Optional[str]):
-    secret = _admin_secret()
-    if not secret:
-        raise HTTPException(status_code=503, detail="EVS admin secret not configured")
     bearer = ""
     if authorization and authorization.lower().startswith("bearer "):
         bearer = authorization[7:].strip()
     supplied = x_evs_admin_key or bearer
-    if not supplied or not hmac.compare_digest(supplied, secret):
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    secret = _admin_secret()
+    if secret and supplied and hmac.compare_digest(supplied, secret):
+        return
+    if bearer and _is_verified_supabase_service_role(bearer):
+        return
+    raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 def _headers():
@@ -109,7 +125,7 @@ def _run_generation(body: GrokVideoRequest):
 
 @router.get("/status")
 def xai_status():
-    return {"ok": True, "xai_configured": bool(XAI_API_KEY), "admin_auth_configured": bool(_admin_secret()), "model": XAI_VIDEO_MODEL}
+    return {"ok": True, "xai_configured": bool(XAI_API_KEY), "admin_auth_configured": bool(_admin_secret()) or bool(SUPABASE_URL), "model": XAI_VIDEO_MODEL}
 
 
 @router.post("/video/generate")
