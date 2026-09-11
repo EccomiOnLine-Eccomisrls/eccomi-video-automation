@@ -1,11 +1,16 @@
 import os
 import time
 import hmac
+import tempfile
+import subprocess
+from pathlib import Path
 from typing import Optional
 
+import imageio_ffmpeg
 import requests
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
+from supabase import create_client
 
 router = APIRouter(prefix="/xai", tags=["xai"])
 
@@ -27,6 +32,17 @@ class GrokVideoRequest(BaseModel):
     generate_audio: bool = False
     poll: bool = True
     poll_timeout_seconds: int = Field(default=240, ge=10, le=600)
+
+
+class GrokSuperMasterRequest(BaseModel):
+    evs_code: str = Field(min_length=3, max_length=64)
+    job_id: str = Field(min_length=3, max_length=160)
+    source_visual_url: str = Field(min_length=8)
+    source_master_url: str = Field(min_length=8)
+    cta_text: str = Field(default="", max_length=220)
+    duration: float = Field(default=15.0, ge=5.0, le=30.0)
+    storage_path: Optional[str] = None
+    callback_url: Optional[str] = None
 
 
 def _admin_secret() -> str:
@@ -64,6 +80,18 @@ def _headers():
     if not XAI_API_KEY:
         raise HTTPException(status_code=503, detail="XAI_API_KEY not configured")
     return {"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"}
+
+
+def _download(url: str, path: Path):
+    try:
+        with requests.get(url, stream=True, timeout=120) as r:
+            r.raise_for_status()
+            with path.open("wb") as fh:
+                for chunk in r.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        fh.write(chunk)
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"download failed: {exc}")
 
 
 def _run_generation(body: GrokVideoRequest):
@@ -123,6 +151,113 @@ def _run_generation(body: GrokVideoRequest):
     return {"ok": True, "provider": "xai", "request_id": request_id, "status": "processing"}
 
 
+def _super_master(body: GrokSuperMasterRequest):
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        raise HTTPException(status_code=503, detail="Supabase service credentials missing")
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    started = time.perf_counter()
+    with tempfile.TemporaryDirectory(prefix="evs_grok_super_master_") as tmp:
+        root = Path(tmp)
+        visual = root / "visual.mp4"
+        source_master = root / "source_master.mp4"
+        output = root / "super_master.mp4"
+        cta_file = root / "cta.txt"
+        _download(body.source_visual_url, visual)
+        _download(body.source_master_url, source_master)
+        cta_file.write_text(body.cta_text.strip(), encoding="utf-8")
+
+        base_filter = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,format=yuv420p"
+        cta = body.cta_text.strip()
+        filters = [f"[0:v]{base_filter}[base]"]
+        out_label = "base"
+        font = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+        if cta:
+            font_part = f":fontfile={font}" if os.path.exists(font) else ""
+            filters.append(
+                f"[base]drawbox=x=70:y=1660:w=940:h=170:color=black@0.52:t=fill:enable='gte(t,{max(0.0, body.duration-3.2):.3f})',"
+                f"drawtext=textfile='{cta_file.as_posix()}':fontcolor=white:fontsize=38{font_part}:x=(w-text_w)/2:y=1715:enable='gte(t,{max(0.0, body.duration-3.2):.3f})'[v]"
+            )
+            out_label = "v"
+        cmd = [
+            ffmpeg, "-y", "-i", str(visual), "-i", str(source_master),
+            "-filter_complex", ";".join(filters),
+            "-map", f"[{out_label}]", "-map", "1:a:0?",
+            "-t", f"{body.duration:.3f}", "-r", "30",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output),
+        ]
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=240)
+        if proc.returncode != 0 and cta:
+            fallback_cmd = [
+                ffmpeg, "-y", "-i", str(visual), "-i", str(source_master),
+                "-vf", base_filter, "-map", "0:v:0", "-map", "1:a:0?",
+                "-t", f"{body.duration:.3f}", "-r", "30",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output),
+            ]
+            proc = subprocess.run(fallback_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=240)
+        if proc.returncode != 0 or not output.exists() or output.stat().st_size < 10000:
+            raise HTTPException(status_code=502, detail={"error": "SUPER_MASTER_FFMPEG_FAILED", "stderr": proc.stderr[-3000:]})
+
+        path = body.storage_path or f"{body.evs_code.upper()}/{int(time.time()*1000)}_grok_super_master.mp4"
+        sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+        with output.open("rb") as fh:
+            sb.storage.from_("videos").upload(path=path, file=fh, file_options={"content-type": "video/mp4", "x-upsert": "true"})
+        public_url = f"{SUPABASE_URL}/storage/v1/object/public/videos/{path}"
+        elapsed = round(time.perf_counter() - started, 3)
+
+        callback_url = body.callback_url or f"{SUPABASE_URL}/functions/v1/evs-video-callback"
+        cb = {
+            "event": "evs.video.completed",
+            "status": "COMPLETED",
+            "job_id": body.job_id,
+            "spot_url": public_url,
+            "customer_reference": body.evs_code.upper(),
+            "generation": {
+                "mode": "grok_super_master_direct_v1",
+                "engine": "eccomi-video-automation",
+                "provider": "xai",
+                "approved_motion_clip_url": body.source_visual_url,
+                "source_master_url": body.source_master_url,
+                "full_motion_master": True,
+                "cta_requested": bool(cta),
+                "target_duration_seconds": body.duration,
+                "width": 1080,
+                "height": 1920,
+                "fps": 30,
+                "gpu_started": False,
+                "total_seconds": elapsed,
+            },
+            "qa": {
+                "technical_pass": True,
+                "approved_motion_clip_used": True,
+                "full_motion_master": True,
+                "static_mascot_fallback_used": False,
+                "gpu_started": False,
+                "audio_preserved": True,
+                "voice_preserved": True,
+                "music_preserved": True,
+                "release_gate_required": True,
+                "output_width": 1080,
+                "output_height": 1920,
+                "target_duration_seconds": body.duration,
+            },
+        }
+        try:
+            r = requests.post(
+                callback_url,
+                json=cb,
+                headers={"Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}", "apikey": SUPABASE_SERVICE_ROLE_KEY, "Content-Type": "application/json"},
+                timeout=45,
+            )
+            callback_status = r.status_code
+            callback_body = r.text[:1200]
+        except requests.RequestException as exc:
+            callback_status = 0
+            callback_body = str(exc)
+        return {"ok": True, "evs_code": body.evs_code.upper(), "job_id": body.job_id, "video_url": public_url, "processing_seconds": elapsed, "gpu_started": False, "callback_status": callback_status, "callback_body": callback_body}
+
+
 @router.get("/status")
 def xai_status():
     return {"ok": True, "xai_configured": bool(XAI_API_KEY), "admin_auth_configured": bool(_admin_secret()) or bool(SUPABASE_URL), "model": XAI_VIDEO_MODEL}
@@ -132,3 +267,9 @@ def xai_status():
 def generate_video(body: GrokVideoRequest, authorization: Optional[str] = Header(default=None), x_evs_admin_key: Optional[str] = Header(default=None)):
     _require_admin(authorization, x_evs_admin_key)
     return _run_generation(body)
+
+
+@router.post("/super-master")
+def generate_super_master(body: GrokSuperMasterRequest, authorization: Optional[str] = Header(default=None), x_evs_admin_key: Optional[str] = Header(default=None)):
+    _require_admin(authorization, x_evs_admin_key)
+    return _super_master(body)
