@@ -41,8 +41,12 @@ class GrokSuperMasterRequest(BaseModel):
     source_master_url: str = Field(min_length=8)
     cta_text: str = Field(default="", max_length=220)
     duration: float = Field(default=15.0, ge=5.0, le=30.0)
-    storage_path: Optional[str] = None
-    callback_url: Optional[str] = None
+    storage_path: str = Field(min_length=3)
+    storage_upload_token: str = Field(min_length=3)
+    output_public_url: str = Field(min_length=8)
+    supabase_url: str = Field(min_length=8)
+    supabase_anon_key: str = Field(min_length=8)
+    callback_url: str = Field(min_length=8)
 
 
 def _admin_secret() -> str:
@@ -152,8 +156,6 @@ def _run_generation(body: GrokVideoRequest):
 
 
 def _super_master(body: GrokSuperMasterRequest):
-    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
-        raise HTTPException(status_code=503, detail="Supabase service credentials missing")
     ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
     started = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="evs_grok_super_master_") as tmp:
@@ -199,14 +201,12 @@ def _super_master(body: GrokSuperMasterRequest):
         if proc.returncode != 0 or not output.exists() or output.stat().st_size < 10000:
             raise HTTPException(status_code=502, detail={"error": "SUPER_MASTER_FFMPEG_FAILED", "stderr": proc.stderr[-3000:]})
 
-        path = body.storage_path or f"{body.evs_code.upper()}/{int(time.time()*1000)}_grok_super_master.mp4"
-        sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+        sb = create_client(body.supabase_url.rstrip("/"), body.supabase_anon_key)
         with output.open("rb") as fh:
-            sb.storage.from_("videos").upload(path=path, file=fh, file_options={"content-type": "video/mp4", "x-upsert": "true"})
-        public_url = f"{SUPABASE_URL}/storage/v1/object/public/videos/{path}"
+            sb.storage.from_("videos").upload_to_signed_url(path=body.storage_path, token=body.storage_upload_token, file=fh)
+        public_url = body.output_public_url
         elapsed = round(time.perf_counter() - started, 3)
 
-        callback_url = body.callback_url or f"{SUPABASE_URL}/functions/v1/evs-video-callback"
         cb = {
             "event": "evs.video.completed",
             "status": "COMPLETED",
@@ -214,7 +214,7 @@ def _super_master(body: GrokSuperMasterRequest):
             "spot_url": public_url,
             "customer_reference": body.evs_code.upper(),
             "generation": {
-                "mode": "grok_super_master_direct_v1",
+                "mode": "grok_super_master_direct_v2",
                 "engine": "eccomi-video-automation",
                 "provider": "xai",
                 "approved_motion_clip_url": body.source_visual_url,
@@ -245,9 +245,9 @@ def _super_master(body: GrokSuperMasterRequest):
         }
         try:
             r = requests.post(
-                callback_url,
+                body.callback_url,
                 json=cb,
-                headers={"Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}", "apikey": SUPABASE_SERVICE_ROLE_KEY, "Content-Type": "application/json"},
+                headers={"Authorization": f"Bearer {body.supabase_anon_key}", "apikey": body.supabase_anon_key, "Content-Type": "application/json"},
                 timeout=45,
             )
             callback_status = r.status_code
