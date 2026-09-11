@@ -5,12 +5,12 @@ import tempfile
 import subprocess
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 import imageio_ffmpeg
 import requests
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
-from supabase import create_client
 
 router = APIRouter(prefix="/xai", tags=["xai"])
 
@@ -45,8 +45,8 @@ class GrokSuperMasterRequest(BaseModel):
     storage_upload_token: str = Field(min_length=3)
     output_public_url: str = Field(min_length=8)
     supabase_url: str = Field(min_length=8)
-    supabase_anon_key: str = Field(min_length=8)
-    callback_url: str = Field(min_length=8)
+    supabase_anon_key: str = Field(default="")
+    callback_url: str = Field(default="")
 
 
 def _admin_secret() -> str:
@@ -80,7 +80,7 @@ def _require_admin(authorization: Optional[str], x_evs_admin_key: Optional[str])
     raise HTTPException(status_code=401, detail="Unauthorized")
 
 
-def _headers():
+def _xai_headers():
     if not XAI_API_KEY:
         raise HTTPException(status_code=503, detail="XAI_API_KEY not configured")
     return {"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"}
@@ -114,12 +114,11 @@ def _run_generation(body: GrokVideoRequest):
         payload["image"] = {"url": body.image_url}
 
     try:
-        response = requests.post(f"{XAI_BASE_URL}/videos/generations", headers=_headers(), json=payload, timeout=60)
+        response = requests.post(f"{XAI_BASE_URL}/videos/generations", headers=_xai_headers(), json=payload, timeout=60)
     except requests.RequestException as exc:
         print(f"GROK_VIDEO_START_NETWORK_ERROR {exc}", flush=True)
         raise HTTPException(status_code=502, detail=f"xAI request failed: {exc}")
     if response.status_code >= 400:
-        print(f"GROK_VIDEO_START_PROVIDER_ERROR status={response.status_code} body={response.text[:1500]}", flush=True)
         raise HTTPException(status_code=502, detail={"provider_status": response.status_code, "provider_body": response.text[:2000]})
 
     started = response.json()
@@ -146,13 +145,33 @@ def _run_generation(body: GrokVideoRequest):
             file_output = video.get("file_output") or result.get("file_output") or {}
             video_url = video.get("url")
             public_url = file_output.get("public_url") or result.get("public_url")
-            print(f"GROK_VIDEO_DONE request_id={request_id} video_url={video_url} public_url={public_url} duration={video.get('duration')} usage={usage}", flush=True)
+            print(f"GROK_VIDEO_DONE request_id={request_id} duration={video.get('duration')} usage={usage}", flush=True)
             return {"ok": True, "provider": "xai", "model": result.get("model") or XAI_VIDEO_MODEL, "request_id": request_id, "status": "done", "video_url": video_url, "public_url": public_url, "duration": video.get("duration"), "usage": usage, "raw": result}
         if status in {"failed", "expired", "cancelled", "canceled"}:
             raise HTTPException(status_code=502, detail={"error": f"xAI generation {status}", "provider": result})
         time.sleep(5)
-
     return {"ok": True, "provider": "xai", "request_id": request_id, "status": "processing"}
+
+
+def _signed_upload(body: GrokSuperMasterRequest, output: Path):
+    encoded_path = quote(body.storage_path, safe="/")
+    signed_url = (
+        f"{body.supabase_url.rstrip('/')}/storage/v1/object/upload/sign/videos/"
+        f"{encoded_path}?token={quote(body.storage_upload_token, safe='')}"
+    )
+    try:
+        with output.open("rb") as fh:
+            r = requests.put(
+                signed_url,
+                data=fh,
+                headers={"Content-Type": "video/mp4", "x-upsert": "true"},
+                timeout=120,
+            )
+        if r.status_code >= 400:
+            raise RuntimeError(f"HTTP {r.status_code}: {r.text[:1200]}")
+    except Exception as exc:
+        print(f"GROK_SUPER_MASTER_UPLOAD_FAILED evs={body.evs_code} err={exc}", flush=True)
+        raise HTTPException(status_code=502, detail={"error": "SUPER_MASTER_UPLOAD_FAILED", "detail": str(exc)})
 
 
 def _super_master(body: GrokSuperMasterRequest):
@@ -169,8 +188,6 @@ def _super_master(body: GrokSuperMasterRequest):
         _download(body.source_master_url, source_master)
         cta_file.write_text(body.cta_text.strip(), encoding="utf-8")
 
-        # Keep the Grok-native 720x1280 frame. Upscaling to 1080x1920 on the
-        # small Render worker caused memory pressure/restarts and adds no source detail.
         out_w, out_h = 720, 1280
         base_filter = f"scale={out_w}:{out_h}:force_original_aspect_ratio=increase,crop={out_w}:{out_h},fps=30,format=yuv420p"
         cta = body.cta_text.strip()
@@ -195,10 +212,8 @@ def _super_master(body: GrokSuperMasterRequest):
         try:
             proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180)
         except subprocess.TimeoutExpired as exc:
-            print(f"GROK_SUPER_MASTER_FFMPEG_TIMEOUT evs={body.evs_code}", flush=True)
-            raise HTTPException(status_code=502, detail={"error":"SUPER_MASTER_FFMPEG_TIMEOUT","detail":str(exc)})
+            raise HTTPException(status_code=502, detail={"error": "SUPER_MASTER_FFMPEG_TIMEOUT", "detail": str(exc)})
         if proc.returncode != 0 and cta:
-            print(f"GROK_SUPER_MASTER_CTA_FALLBACK evs={body.evs_code} rc={proc.returncode} stderr={proc.stderr[-1200:]}", flush=True)
             fallback_cmd = [
                 ffmpeg, "-y", "-threads", "1", "-i", str(visual), "-i", str(source_master),
                 "-vf", base_filter, "-map", "0:v:0", "-map", "1:a:0?",
@@ -208,69 +223,29 @@ def _super_master(body: GrokSuperMasterRequest):
             ]
             proc = subprocess.run(fallback_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180)
         if proc.returncode != 0 or not output.exists() or output.stat().st_size < 10000:
-            print(f"GROK_SUPER_MASTER_FFMPEG_FAILED evs={body.evs_code} rc={proc.returncode} stderr={proc.stderr[-2500:]}", flush=True)
+            print(f"GROK_SUPER_MASTER_FFMPEG_FAILED evs={body.evs_code} stderr={proc.stderr[-2500:]}", flush=True)
             raise HTTPException(status_code=502, detail={"error": "SUPER_MASTER_FFMPEG_FAILED", "stderr": proc.stderr[-3000:]})
 
-        sb = create_client(body.supabase_url.rstrip("/"), body.supabase_anon_key)
-        try:
-            with output.open("rb") as fh:
-                sb.storage.from_("videos").upload_to_signed_url(path=body.storage_path, token=body.storage_upload_token, file=fh)
-        except Exception as exc:
-            print(f"GROK_SUPER_MASTER_UPLOAD_FAILED evs={body.evs_code} err={exc}", flush=True)
-            raise HTTPException(status_code=502, detail={"error":"SUPER_MASTER_UPLOAD_FAILED","detail":str(exc)})
-        public_url = body.output_public_url
+        _signed_upload(body, output)
         elapsed = round(time.perf_counter() - started, 3)
-
-        cb = {
-            "event": "evs.video.completed",
-            "status": "COMPLETED",
+        print(f"GROK_SUPER_MASTER_DONE evs={body.evs_code} seconds={elapsed}", flush=True)
+        return {
+            "ok": True,
+            "evs_code": body.evs_code.upper(),
             "job_id": body.job_id,
-            "spot_url": public_url,
-            "customer_reference": body.evs_code.upper(),
+            "video_url": body.output_public_url,
+            "processing_seconds": elapsed,
+            "gpu_started": False,
             "generation": {
-                "mode": "grok_super_master_direct_v3_low_memory",
-                "engine": "eccomi-video-automation",
-                "provider": "xai",
-                "approved_motion_clip_url": body.source_visual_url,
-                "source_master_url": body.source_master_url,
-                "full_motion_master": True,
-                "cta_requested": bool(cta),
-                "target_duration_seconds": body.duration,
-                "width": out_w,
-                "height": out_h,
+                "mode": "grok_super_master_direct_v4_signed_http",
+                "width": 720,
+                "height": 1280,
                 "fps": 30,
-                "gpu_started": False,
-                "total_seconds": elapsed,
-            },
-            "qa": {
-                "technical_pass": True,
-                "approved_motion_clip_used": True,
-                "full_motion_master": True,
-                "static_mascot_fallback_used": False,
-                "gpu_started": False,
-                "audio_preserved": True,
-                "voice_preserved": True,
-                "music_preserved": True,
-                "release_gate_required": True,
-                "output_width": out_w,
-                "output_height": out_h,
+                "frames": int(round(body.duration * 30)),
+                "scene_count": 1,
                 "target_duration_seconds": body.duration,
             },
         }
-        try:
-            r = requests.post(
-                body.callback_url,
-                json=cb,
-                headers={"Authorization": f"Bearer {body.supabase_anon_key}", "apikey": body.supabase_anon_key, "Content-Type": "application/json"},
-                timeout=45,
-            )
-            callback_status = r.status_code
-            callback_body = r.text[:1200]
-        except requests.RequestException as exc:
-            callback_status = 0
-            callback_body = str(exc)
-        print(f"GROK_SUPER_MASTER_DONE evs={body.evs_code} seconds={elapsed} callback={callback_status}", flush=True)
-        return {"ok": True, "evs_code": body.evs_code.upper(), "job_id": body.job_id, "video_url": public_url, "processing_seconds": elapsed, "gpu_started": False, "callback_status": callback_status, "callback_body": callback_body}
 
 
 @router.get("/status")
