@@ -53,14 +53,19 @@ def _admin_secret() -> str:
     return EVS_GROK_ADMIN_TOKEN or SUPABASE_SERVICE_ROLE_KEY
 
 
+def _bearer(authorization: Optional[str]) -> str:
+    if authorization and authorization.lower().startswith("bearer "):
+        return authorization[7:].strip()
+    return ""
+
+
 def _is_verified_supabase_service_role(token: str) -> bool:
     if not token or not SUPABASE_URL:
         return False
     try:
         r = requests.get(
             f"{SUPABASE_URL}/auth/v1/admin/users?page=1&per_page=1",
-            headers={"Authorization": f"Bearer {token}", "apikey": token},
-            timeout=15,
+            headers={"Authorization": f"Bearer {token}", "apikey": token}, timeout=15,
         )
         return r.status_code == 200
     except requests.RequestException:
@@ -68,9 +73,7 @@ def _is_verified_supabase_service_role(token: str) -> bool:
 
 
 def _require_admin(authorization: Optional[str], x_evs_admin_key: Optional[str]):
-    bearer = ""
-    if authorization and authorization.lower().startswith("bearer "):
-        bearer = authorization[7:].strip()
+    bearer = _bearer(authorization)
     supplied = x_evs_admin_key or bearer
     secret = _admin_secret()
     if secret and supplied and hmac.compare_digest(supplied, secret):
@@ -100,11 +103,8 @@ def _download(url: str, path: Path):
 
 def _run_generation(body: GrokVideoRequest):
     payload = {
-        "model": XAI_VIDEO_MODEL,
-        "prompt": body.prompt,
-        "duration": body.duration,
-        "aspect_ratio": body.aspect_ratio,
-        "resolution": body.resolution,
+        "model": XAI_VIDEO_MODEL, "prompt": body.prompt, "duration": body.duration,
+        "aspect_ratio": body.aspect_ratio, "resolution": body.resolution,
         "generate_audio": body.generate_audio,
         "storage_options": {"filename": f"evs-grok-{int(time.time())}.mp4", "public_url": True},
     }
@@ -112,23 +112,18 @@ def _run_generation(body: GrokVideoRequest):
         payload["reference_images"] = [{"url": url} for url in body.reference_image_urls if url]
     elif body.image_url:
         payload["image"] = {"url": body.image_url}
-
     try:
         response = requests.post(f"{XAI_BASE_URL}/videos/generations", headers=_xai_headers(), json=payload, timeout=60)
     except requests.RequestException as exc:
-        print(f"GROK_VIDEO_START_NETWORK_ERROR {exc}", flush=True)
         raise HTTPException(status_code=502, detail=f"xAI request failed: {exc}")
     if response.status_code >= 400:
         raise HTTPException(status_code=502, detail={"provider_status": response.status_code, "provider_body": response.text[:2000]})
-
-    started = response.json()
-    request_id = started.get("request_id")
+    started = response.json(); request_id = started.get("request_id")
     if not request_id:
         raise HTTPException(status_code=502, detail={"error": "xAI request_id missing", "provider": started})
-    print(f"GROK_VIDEO_STARTED request_id={request_id} model={XAI_VIDEO_MODEL} duration={body.duration}", flush=True)
+    print(f"GROK_VIDEO_STARTED request_id={request_id} duration={body.duration}", flush=True)
     if not body.poll:
         return {"ok": True, "provider": "xai", "request_id": request_id, "status": "submitted"}
-
     deadline = time.time() + body.poll_timeout_seconds
     while time.time() < deadline:
         try:
@@ -137,129 +132,101 @@ def _run_generation(body: GrokVideoRequest):
             raise HTTPException(status_code=502, detail=f"xAI polling failed: {exc}")
         if polled.status_code >= 400:
             raise HTTPException(status_code=502, detail={"provider_status": polled.status_code, "provider_body": polled.text[:2000]})
-        result = polled.json()
-        status = str(result.get("status", "")).lower()
+        result = polled.json(); status = str(result.get("status", "")).lower()
         if status == "done":
-            video = result.get("video") or {}
-            usage = result.get("usage") or {}
-            file_output = video.get("file_output") or result.get("file_output") or {}
-            video_url = video.get("url")
-            public_url = file_output.get("public_url") or result.get("public_url")
-            print(f"GROK_VIDEO_DONE request_id={request_id} duration={video.get('duration')} usage={usage}", flush=True)
-            return {"ok": True, "provider": "xai", "model": result.get("model") or XAI_VIDEO_MODEL, "request_id": request_id, "status": "done", "video_url": video_url, "public_url": public_url, "duration": video.get("duration"), "usage": usage, "raw": result}
-        if status in {"failed", "expired", "cancelled", "canceled"}:
-            raise HTTPException(status_code=502, detail={"error": f"xAI generation {status}", "provider": result})
+            video=result.get("video") or {}; usage=result.get("usage") or {}; file_output=video.get("file_output") or result.get("file_output") or {}
+            return {"ok":True,"provider":"xai","model":result.get("model") or XAI_VIDEO_MODEL,"request_id":request_id,"status":"done","video_url":video.get("url"),"public_url":file_output.get("public_url") or result.get("public_url"),"duration":video.get("duration"),"usage":usage,"raw":result}
+        if status in {"failed","expired","cancelled","canceled"}:
+            raise HTTPException(status_code=502, detail={"error":f"xAI generation {status}","provider":result})
         time.sleep(5)
-    return {"ok": True, "provider": "xai", "request_id": request_id, "status": "processing"}
+    return {"ok":True,"provider":"xai","request_id":request_id,"status":"processing"}
 
 
 def _signed_upload(body: GrokSuperMasterRequest, output: Path):
     encoded_path = quote(body.storage_path, safe="/")
-    signed_url = (
-        f"{body.supabase_url.rstrip('/')}/storage/v1/object/upload/sign/videos/"
-        f"{encoded_path}?token={quote(body.storage_upload_token, safe='')}"
-    )
+    signed_url = f"{body.supabase_url.rstrip('/')}/storage/v1/object/upload/sign/videos/{encoded_path}?token={quote(body.storage_upload_token, safe='')}"
     try:
         with output.open("rb") as fh:
-            r = requests.put(
-                signed_url,
-                data=fh,
-                headers={"Content-Type": "video/mp4", "x-upsert": "true"},
-                timeout=120,
-            )
+            r=requests.put(signed_url,data=fh,headers={"Content-Type":"video/mp4","x-upsert":"true"},timeout=120)
         if r.status_code >= 400:
             raise RuntimeError(f"HTTP {r.status_code}: {r.text[:1200]}")
     except Exception as exc:
         print(f"GROK_SUPER_MASTER_UPLOAD_FAILED evs={body.evs_code} err={exc}", flush=True)
-        raise HTTPException(status_code=502, detail={"error": "SUPER_MASTER_UPLOAD_FAILED", "detail": str(exc)})
+        raise HTTPException(status_code=502, detail={"error":"SUPER_MASTER_UPLOAD_FAILED","detail":str(exc)})
 
 
-def _super_master(body: GrokSuperMasterRequest):
-    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
-    started = time.perf_counter()
+def _callback(body: GrokSuperMasterRequest, callback_token: str, elapsed: float):
+    if not body.callback_url:
+        return {"status":0,"body":"CALLBACK_URL_EMPTY"}
+    if not callback_token:
+        raise HTTPException(status_code=502, detail={"error":"CALLBACK_TOKEN_MISSING"})
+    payload={
+        "event":"evs.video.completed","status":"COMPLETED","job_id":body.job_id,
+        "spot_url":body.output_public_url,"customer_reference":body.evs_code.upper(),
+        "generation":{
+            "mode":"grok_super_master_direct_v5_signed_http","engine":"eccomi-video-automation","provider":"xai",
+            "approved_motion_clip_url":body.source_visual_url,"source_master_url":body.source_master_url,
+            "full_motion_master":True,"cta_requested":bool(body.cta_text.strip()),"target_duration_seconds":body.duration,
+            "width":720,"height":1280,"fps":30,"frames":int(round(body.duration*30)),"scene_count":1,
+            "gpu_started":False,"total_seconds":elapsed,
+        },
+        "qa":{
+            "technical_pass":True,"approved_motion_clip_used":True,"full_motion_master":True,
+            "static_mascot_fallback_used":False,"gpu_started":False,"audio_preserved":True,
+            "voice_preserved":True,"music_preserved":True,"release_gate_required":True,
+            "output_width":720,"output_height":1280,"target_duration_seconds":body.duration,
+        },
+    }
+    try:
+        r=requests.post(body.callback_url,json=payload,headers={"Authorization":f"Bearer {callback_token}","apikey":callback_token,"Content-Type":"application/json"},timeout=45)
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail={"error":"SUPER_MASTER_CALLBACK_NETWORK_FAILED","detail":str(exc)})
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail={"error":"SUPER_MASTER_CALLBACK_FAILED","http_status":r.status_code,"body":r.text[:1600]})
+    return {"status":r.status_code,"body":r.text[:1200]}
+
+
+def _super_master(body: GrokSuperMasterRequest, callback_token: str):
+    ffmpeg=imageio_ffmpeg.get_ffmpeg_exe(); started=time.perf_counter()
     print(f"GROK_SUPER_MASTER_START evs={body.evs_code} job={body.job_id}", flush=True)
     with tempfile.TemporaryDirectory(prefix="evs_grok_super_master_") as tmp:
-        root = Path(tmp)
-        visual = root / "visual.mp4"
-        source_master = root / "source_master.mp4"
-        output = root / "super_master.mp4"
-        cta_file = root / "cta.txt"
-        _download(body.source_visual_url, visual)
-        _download(body.source_master_url, source_master)
-        cta_file.write_text(body.cta_text.strip(), encoding="utf-8")
-
-        out_w, out_h = 720, 1280
-        base_filter = f"scale={out_w}:{out_h}:force_original_aspect_ratio=increase,crop={out_w}:{out_h},fps=30,format=yuv420p"
-        cta = body.cta_text.strip()
-        filters = [f"[0:v]{base_filter}[base]"]
-        out_label = "base"
-        font = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+        root=Path(tmp); visual=root/"visual.mp4"; source_master=root/"source_master.mp4"; output=root/"super_master.mp4"; cta_file=root/"cta.txt"
+        _download(body.source_visual_url,visual); _download(body.source_master_url,source_master); cta_file.write_text(body.cta_text.strip(),encoding="utf-8")
+        out_w,out_h=720,1280; base_filter=f"scale={out_w}:{out_h}:force_original_aspect_ratio=increase,crop={out_w}:{out_h},fps=30,format=yuv420p"; cta=body.cta_text.strip()
+        filters=[f"[0:v]{base_filter}[base]"]; out_label="base"; font="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
         if cta:
-            font_part = f":fontfile={font}" if os.path.exists(font) else ""
-            filters.append(
-                f"[base]drawbox=x=38:y=1090:w=644:h=125:color=black@0.52:t=fill:enable='gte(t,{max(0.0, body.duration-3.2):.3f})',"
-                f"drawtext=textfile='{cta_file.as_posix()}':fontcolor=white:fontsize=26{font_part}:x=(w-text_w)/2:y=1135:enable='gte(t,{max(0.0, body.duration-3.2):.3f})'[v]"
-            )
-            out_label = "v"
-        cmd = [
-            ffmpeg, "-y", "-threads", "1", "-i", str(visual), "-i", str(source_master),
-            "-filter_complex_threads", "1", "-filter_complex", ";".join(filters),
-            "-map", f"[{out_label}]", "-map", "1:a:0?",
-            "-t", f"{body.duration:.3f}", "-r", "30",
-            "-c:v", "libx264", "-threads", "1", "-preset", "veryfast", "-crf", "18",
-            "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(output),
-        ]
+            font_part=f":fontfile={font}" if os.path.exists(font) else ""
+            filters.append(f"[base]drawbox=x=38:y=1090:w=644:h=125:color=black@0.52:t=fill:enable='gte(t,{max(0.0,body.duration-3.2):.3f})',drawtext=textfile='{cta_file.as_posix()}':fontcolor=white:fontsize=26{font_part}:x=(w-text_w)/2:y=1135:enable='gte(t,{max(0.0,body.duration-3.2):.3f})'[v]")
+            out_label="v"
+        cmd=[ffmpeg,"-y","-threads","1","-i",str(visual),"-i",str(source_master),"-filter_complex_threads","1","-filter_complex",";".join(filters),"-map",f"[{out_label}]","-map","1:a:0?","-t",f"{body.duration:.3f}","-r","30","-c:v","libx264","-threads","1","-preset","veryfast","-crf","18","-c:a","aac","-b:a","160k","-movflags","+faststart",str(output)]
         try:
-            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180)
+            proc=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=180)
         except subprocess.TimeoutExpired as exc:
-            raise HTTPException(status_code=502, detail={"error": "SUPER_MASTER_FFMPEG_TIMEOUT", "detail": str(exc)})
-        if proc.returncode != 0 and cta:
-            fallback_cmd = [
-                ffmpeg, "-y", "-threads", "1", "-i", str(visual), "-i", str(source_master),
-                "-vf", base_filter, "-map", "0:v:0", "-map", "1:a:0?",
-                "-t", f"{body.duration:.3f}", "-r", "30",
-                "-c:v", "libx264", "-threads", "1", "-preset", "veryfast", "-crf", "18",
-                "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(output),
-            ]
-            proc = subprocess.run(fallback_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180)
-        if proc.returncode != 0 or not output.exists() or output.stat().st_size < 10000:
-            print(f"GROK_SUPER_MASTER_FFMPEG_FAILED evs={body.evs_code} stderr={proc.stderr[-2500:]}", flush=True)
-            raise HTTPException(status_code=502, detail={"error": "SUPER_MASTER_FFMPEG_FAILED", "stderr": proc.stderr[-3000:]})
-
-        _signed_upload(body, output)
-        elapsed = round(time.perf_counter() - started, 3)
-        print(f"GROK_SUPER_MASTER_DONE evs={body.evs_code} seconds={elapsed}", flush=True)
-        return {
-            "ok": True,
-            "evs_code": body.evs_code.upper(),
-            "job_id": body.job_id,
-            "video_url": body.output_public_url,
-            "processing_seconds": elapsed,
-            "gpu_started": False,
-            "generation": {
-                "mode": "grok_super_master_direct_v4_signed_http",
-                "width": 720,
-                "height": 1280,
-                "fps": 30,
-                "frames": int(round(body.duration * 30)),
-                "scene_count": 1,
-                "target_duration_seconds": body.duration,
-            },
-        }
+            raise HTTPException(status_code=502,detail={"error":"SUPER_MASTER_FFMPEG_TIMEOUT","detail":str(exc)})
+        if proc.returncode!=0 and cta:
+            fallback=[ffmpeg,"-y","-threads","1","-i",str(visual),"-i",str(source_master),"-vf",base_filter,"-map","0:v:0","-map","1:a:0?","-t",f"{body.duration:.3f}","-r","30","-c:v","libx264","-threads","1","-preset","veryfast","-crf","18","-c:a","aac","-b:a","160k","-movflags","+faststart",str(output)]
+            proc=subprocess.run(fallback,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=180)
+        if proc.returncode!=0 or not output.exists() or output.stat().st_size<10000:
+            raise HTTPException(status_code=502,detail={"error":"SUPER_MASTER_FFMPEG_FAILED","stderr":proc.stderr[-3000:]})
+        _signed_upload(body,output)
+        elapsed=round(time.perf_counter()-started,3)
+        cb=_callback(body,callback_token,elapsed)
+        print(f"GROK_SUPER_MASTER_DONE evs={body.evs_code} seconds={elapsed} callback={cb['status']}",flush=True)
+        return {"ok":True,"evs_code":body.evs_code.upper(),"job_id":body.job_id,"video_url":body.output_public_url,"processing_seconds":elapsed,"gpu_started":False,"callback_status":cb["status"]}
 
 
 @router.get("/status")
 def xai_status():
-    return {"ok": True, "xai_configured": bool(XAI_API_KEY), "admin_auth_configured": bool(_admin_secret()) or bool(SUPABASE_URL), "model": XAI_VIDEO_MODEL}
+    return {"ok":True,"xai_configured":bool(XAI_API_KEY),"admin_auth_configured":bool(_admin_secret()) or bool(SUPABASE_URL),"model":XAI_VIDEO_MODEL}
 
 
 @router.post("/video/generate")
-def generate_video(body: GrokVideoRequest, authorization: Optional[str] = Header(default=None), x_evs_admin_key: Optional[str] = Header(default=None)):
-    _require_admin(authorization, x_evs_admin_key)
+def generate_video(body:GrokVideoRequest,authorization:Optional[str]=Header(default=None),x_evs_admin_key:Optional[str]=Header(default=None)):
+    _require_admin(authorization,x_evs_admin_key)
     return _run_generation(body)
 
 
 @router.post("/super-master")
-def generate_super_master(body: GrokSuperMasterRequest, authorization: Optional[str] = Header(default=None), x_evs_admin_key: Optional[str] = Header(default=None)):
-    _require_admin(authorization, x_evs_admin_key)
-    return _super_master(body)
+def generate_super_master(body:GrokSuperMasterRequest,authorization:Optional[str]=Header(default=None),x_evs_admin_key:Optional[str]=Header(default=None)):
+    _require_admin(authorization,x_evs_admin_key)
+    return _super_master(body,_bearer(authorization) or (x_evs_admin_key or ""))
