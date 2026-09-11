@@ -4,3 +4,4 @@ gunicorn==23.0.0
 requests==2.32.3
 python-multipart==0.0.9
 supabase==2.4.4
+imageio-ffmpeg==0.5.1
