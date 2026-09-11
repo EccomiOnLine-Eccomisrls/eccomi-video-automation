@@ -158,6 +158,7 @@ def _run_generation(body: GrokVideoRequest):
 def _super_master(body: GrokSuperMasterRequest):
     ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
     started = time.perf_counter()
+    print(f"GROK_SUPER_MASTER_START evs={body.evs_code} job={body.job_id}", flush=True)
     with tempfile.TemporaryDirectory(prefix="evs_grok_super_master_") as tmp:
         root = Path(tmp)
         visual = root / "visual.mp4"
@@ -168,7 +169,10 @@ def _super_master(body: GrokSuperMasterRequest):
         _download(body.source_master_url, source_master)
         cta_file.write_text(body.cta_text.strip(), encoding="utf-8")
 
-        base_filter = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,format=yuv420p"
+        # Keep the Grok-native 720x1280 frame. Upscaling to 1080x1920 on the
+        # small Render worker caused memory pressure/restarts and adds no source detail.
+        out_w, out_h = 720, 1280
+        base_filter = f"scale={out_w}:{out_h}:force_original_aspect_ratio=increase,crop={out_w}:{out_h},fps=30,format=yuv420p"
         cta = body.cta_text.strip()
         filters = [f"[0:v]{base_filter}[base]"]
         out_label = "base"
@@ -176,34 +180,44 @@ def _super_master(body: GrokSuperMasterRequest):
         if cta:
             font_part = f":fontfile={font}" if os.path.exists(font) else ""
             filters.append(
-                f"[base]drawbox=x=70:y=1660:w=940:h=170:color=black@0.52:t=fill:enable='gte(t,{max(0.0, body.duration-3.2):.3f})',"
-                f"drawtext=textfile='{cta_file.as_posix()}':fontcolor=white:fontsize=38{font_part}:x=(w-text_w)/2:y=1715:enable='gte(t,{max(0.0, body.duration-3.2):.3f})'[v]"
+                f"[base]drawbox=x=38:y=1090:w=644:h=125:color=black@0.52:t=fill:enable='gte(t,{max(0.0, body.duration-3.2):.3f})',"
+                f"drawtext=textfile='{cta_file.as_posix()}':fontcolor=white:fontsize=26{font_part}:x=(w-text_w)/2:y=1135:enable='gte(t,{max(0.0, body.duration-3.2):.3f})'[v]"
             )
             out_label = "v"
         cmd = [
-            ffmpeg, "-y", "-i", str(visual), "-i", str(source_master),
-            "-filter_complex", ";".join(filters),
+            ffmpeg, "-y", "-threads", "1", "-i", str(visual), "-i", str(source_master),
+            "-filter_complex_threads", "1", "-filter_complex", ";".join(filters),
             "-map", f"[{out_label}]", "-map", "1:a:0?",
             "-t", f"{body.duration:.3f}", "-r", "30",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
-            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output),
+            "-c:v", "libx264", "-threads", "1", "-preset", "veryfast", "-crf", "18",
+            "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(output),
         ]
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=240)
+        try:
+            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180)
+        except subprocess.TimeoutExpired as exc:
+            print(f"GROK_SUPER_MASTER_FFMPEG_TIMEOUT evs={body.evs_code}", flush=True)
+            raise HTTPException(status_code=502, detail={"error":"SUPER_MASTER_FFMPEG_TIMEOUT","detail":str(exc)})
         if proc.returncode != 0 and cta:
+            print(f"GROK_SUPER_MASTER_CTA_FALLBACK evs={body.evs_code} rc={proc.returncode} stderr={proc.stderr[-1200:]}", flush=True)
             fallback_cmd = [
-                ffmpeg, "-y", "-i", str(visual), "-i", str(source_master),
+                ffmpeg, "-y", "-threads", "1", "-i", str(visual), "-i", str(source_master),
                 "-vf", base_filter, "-map", "0:v:0", "-map", "1:a:0?",
                 "-t", f"{body.duration:.3f}", "-r", "30",
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
-                "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output),
+                "-c:v", "libx264", "-threads", "1", "-preset", "veryfast", "-crf", "18",
+                "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(output),
             ]
-            proc = subprocess.run(fallback_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=240)
+            proc = subprocess.run(fallback_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180)
         if proc.returncode != 0 or not output.exists() or output.stat().st_size < 10000:
+            print(f"GROK_SUPER_MASTER_FFMPEG_FAILED evs={body.evs_code} rc={proc.returncode} stderr={proc.stderr[-2500:]}", flush=True)
             raise HTTPException(status_code=502, detail={"error": "SUPER_MASTER_FFMPEG_FAILED", "stderr": proc.stderr[-3000:]})
 
         sb = create_client(body.supabase_url.rstrip("/"), body.supabase_anon_key)
-        with output.open("rb") as fh:
-            sb.storage.from_("videos").upload_to_signed_url(path=body.storage_path, token=body.storage_upload_token, file=fh)
+        try:
+            with output.open("rb") as fh:
+                sb.storage.from_("videos").upload_to_signed_url(path=body.storage_path, token=body.storage_upload_token, file=fh)
+        except Exception as exc:
+            print(f"GROK_SUPER_MASTER_UPLOAD_FAILED evs={body.evs_code} err={exc}", flush=True)
+            raise HTTPException(status_code=502, detail={"error":"SUPER_MASTER_UPLOAD_FAILED","detail":str(exc)})
         public_url = body.output_public_url
         elapsed = round(time.perf_counter() - started, 3)
 
@@ -214,7 +228,7 @@ def _super_master(body: GrokSuperMasterRequest):
             "spot_url": public_url,
             "customer_reference": body.evs_code.upper(),
             "generation": {
-                "mode": "grok_super_master_direct_v2",
+                "mode": "grok_super_master_direct_v3_low_memory",
                 "engine": "eccomi-video-automation",
                 "provider": "xai",
                 "approved_motion_clip_url": body.source_visual_url,
@@ -222,8 +236,8 @@ def _super_master(body: GrokSuperMasterRequest):
                 "full_motion_master": True,
                 "cta_requested": bool(cta),
                 "target_duration_seconds": body.duration,
-                "width": 1080,
-                "height": 1920,
+                "width": out_w,
+                "height": out_h,
                 "fps": 30,
                 "gpu_started": False,
                 "total_seconds": elapsed,
@@ -238,8 +252,8 @@ def _super_master(body: GrokSuperMasterRequest):
                 "voice_preserved": True,
                 "music_preserved": True,
                 "release_gate_required": True,
-                "output_width": 1080,
-                "output_height": 1920,
+                "output_width": out_w,
+                "output_height": out_h,
                 "target_duration_seconds": body.duration,
             },
         }
@@ -255,6 +269,7 @@ def _super_master(body: GrokSuperMasterRequest):
         except requests.RequestException as exc:
             callback_status = 0
             callback_body = str(exc)
+        print(f"GROK_SUPER_MASTER_DONE evs={body.evs_code} seconds={elapsed} callback={callback_status}", flush=True)
         return {"ok": True, "evs_code": body.evs_code.upper(), "job_id": body.job_id, "video_url": public_url, "processing_seconds": elapsed, "gpu_started": False, "callback_status": callback_status, "callback_body": callback_body}
 
 
