@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, StreamingResponse
 
 from supabase import create_client, Client
+from grok_router import router as grok_router
 
 
 # =====================================================
@@ -760,6 +761,7 @@ def runpod_submit(token):
 # FASTAPI
 # =====================================================
 app = FastAPI(title="EVS FINAL")
+app.include_router(grok_router)
 
 app.add_middleware(
     CORSMiddleware,
